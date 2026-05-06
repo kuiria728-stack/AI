@@ -954,7 +954,7 @@ async function sendMessage() {
   const sysPrompt = document.getElementById('sys-input').value.trim();
 
   try {
-    const res = await fetch('/api/chat', {
+    const res = await fetch('https://wise-lamb-60.kuiria728-stack.deno.net', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
