@@ -1,19 +1,12 @@
 [build]
   publish = "."
-  functions = "api"  # 画像にあるフォルダ名に合わせる
-
-[dev]
-  port = 8888
-  targetPort = 3000
-
-[[headers]]
-  for = "/*"
-  [headers.values]
-    X-Frame-Options = "DENY"
-    X-Content-Type-Options = "nosniff"
-    Referrer-Policy = "strict-origin-when-cross-origin"
+  functions = "api"
 
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/:splat"
   status = 200
+
+[functions]
+  directory = "api"
+  node_bundler = "esbuild"
