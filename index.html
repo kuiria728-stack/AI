@@ -663,7 +663,7 @@
 //  1. 状態管理 (STATE)
 // ─────────────────────────────────────────
 const STATE = {
-  messages: [],          // {role, content}
+  messages: [],
   isPro: false,
   proKey: '',
   dailyCount: 0,
@@ -675,7 +675,6 @@ const STATE = {
 const DAILY_LIMIT = { free: 250, pro: 35000 };
 const INTERVAL_MS = { free: 5 * 60 * 1000, pro: (60 / 90) * 1000 };
 
-// ローカルストレージから設定を読み込む
 function loadState() {
   try {
     const d = localStorage.getItem('jibuntsukuru_state');
@@ -689,13 +688,10 @@ function loadState() {
       STATE.isPro  = p.isPro || false;
       STATE.proKey = p.proKey || '';
     }
-  } catch(e) {
-    console.error("State load error:", e);
-  }
+  } catch(e) {}
   updateUI();
 }
 
-// 設定をローカルストレージに保存
 function saveState() {
   try {
     localStorage.setItem('jibuntsukuru_state', JSON.stringify({
@@ -705,17 +701,13 @@ function saveState() {
       isPro: STATE.isPro,
       proKey: STATE.proKey,
     }));
-  } catch(e) {
-    console.error("State save error:", e);
-  }
+  } catch(e) {}
 }
 
-// UIの表示を更新 (制限数やProバッジ)
 function updateUI() {
   const limit = STATE.isPro ? DAILY_LIMIT.pro : DAILY_LIMIT.free;
   document.getElementById('count-display').textContent = STATE.dailyCount;
   document.getElementById('limit-display').textContent = limit;
-
   const proStatus = document.getElementById('pro-status');
   const proLabel  = document.getElementById('pro-label');
   if (STATE.isPro) {
@@ -728,13 +720,29 @@ function updateUI() {
 }
 
 // ─────────────────────────────────────────
-//  2. メッセージ描画 (Rendering)
+//  2. 安全な描画処理 (Security & Rendering)
 // ─────────────────────────────────────────
 
-// シンプルなマークダウン変換
+// HTMLタグを無効化する関数（エスケープ処理）
+function escapeHTML(str) {
+  return str.replace(/[&<>"']/g, function(m) {
+    return {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[m];
+  });
+}
+
 function parseTextMD(text) {
   if (!text) return "";
-  return text
+  // まず全てのHTMLタグを無効化し、単なる文字にする
+  let escaped = escapeHTML(text);
+  
+  // その後、安全な装飾だけを適用する
+  return escaped
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/^### (.+)$/gm, '<h3>$1</h3>')
     .replace(/^## (.+)$/gm, '<h2>$1</h2>')
@@ -743,12 +751,10 @@ function parseTextMD(text) {
     .replace(/\n/g, '<br>');
 }
 
-// AIの回答を構造的に描画 (コードブロック抽出付き)
 function renderAIContent(targetEl, content) {
   if (!targetEl) return;
   targetEl.innerHTML = '';
 
-  // DeepSeek等の <think> タグ（思考プロセス）を削除
   let cleanContent = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
 
   const parts = [];
@@ -756,7 +762,6 @@ function renderAIContent(targetEl, content) {
   let last = 0;
   let match;
 
-  // コードブロックを抽出
   while ((match = regex.exec(cleanContent)) !== null) {
     if (match.index > last) {
       parts.push({ type: 'text', content: cleanContent.slice(last, match.index) });
@@ -768,24 +773,21 @@ function renderAIContent(targetEl, content) {
     parts.push({ type: 'text', content: cleanContent.slice(last) });
   }
 
-  // 要素を組み立てて追加
   for (const part of parts) {
     if (part.type === 'text') {
       const wrapper = document.createElement('div');
+      // エスケープ済みのテキストをHTMLとして入れる
       wrapper.innerHTML = parseTextMD(part.content);
       targetEl.appendChild(wrapper);
     } else {
       const isHTML = /html|HTML/.test(part.lang) || /<!DOCTYPE|<html|<head|<body|<div/i.test(part.code);
       const blockWrap = document.createElement('div');
       blockWrap.className = 'code-block-wrapper';
-
       const pre = document.createElement('pre');
       const code = document.createElement('code');
-      code.textContent = part.code;
+      code.textContent = part.code; // .textContent は自動的にエスケープされるため安全
       pre.appendChild(code);
       blockWrap.appendChild(pre);
-
-      // preview.js の機能を使ってプレビューボタンを追加
       if (window.PreviewManager) {
         const actions = PreviewManager.createCodeActions(part.code, isHTML, 0);
         blockWrap.appendChild(actions);
@@ -795,7 +797,6 @@ function renderAIContent(targetEl, content) {
   }
 }
 
-// メッセージバブルを画面に追加
 function renderMessage(role, content) {
   const welcome = document.getElementById('welcome');
   if (welcome) welcome.remove();
@@ -810,14 +811,12 @@ function renderMessage(role, content) {
 
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
-  
   const contentDiv = document.createElement('div');
   contentDiv.className = 'message-content';
 
   if (role === 'user') {
     contentDiv.textContent = content;
   } else {
-    // AIの場合は最初は空で作成し、後からストリーミング更新する
     renderAIContent(contentDiv, content);
   }
 
@@ -826,8 +825,7 @@ function renderMessage(role, content) {
   div.appendChild(bubble);
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
-  
-  return contentDiv; // 更新用要素を返す
+  return contentDiv;
 }
 
 function showTyping() {
@@ -846,7 +844,7 @@ function removeTyping() {
 }
 
 // ─────────────────────────────────────────
-//  3. 送信処理 (ストリーミング対応版)
+//  3. 送信処理 (ストリーミング)
 // ─────────────────────────────────────────
 async function sendMessage() {
   if (STATE.isLoading) return;
@@ -856,25 +854,22 @@ async function sendMessage() {
   const sysPrompt = document.getElementById('sys-input').value.trim();
   if (!text) return;
 
-  // 送信制限チェック
   const limit = STATE.isPro ? DAILY_LIMIT.pro : DAILY_LIMIT.free;
   const interval = STATE.isPro ? INTERVAL_MS.pro : INTERVAL_MS.free;
 
   if (STATE.dailyCount >= limit) {
-    showToast('今日の送信制限に達しました。明日また使ってね！', 'error');
+    showToast('今日の送信制限に達しました。', 'error');
     return;
   }
 
   const now = Date.now();
   const wait = interval - (now - STATE.lastSent);
   if (wait > 0) {
-    const secs = Math.ceil(wait / 1000);
-    showToast(`${secs}秒後に送信できます`, 'error');
+    showToast(`${Math.ceil(wait/1000)}秒後に送信できます`, 'error');
     startCooldown(wait);
     return;
   }
 
-  // UI更新: 自分のメッセージを表示
   STATE.isLoading = true;
   document.getElementById('send-btn').disabled = true;
   userInput.value = '';
@@ -884,7 +879,6 @@ async function sendMessage() {
   STATE.messages.push({ role: 'user', content: text });
   showTyping();
 
-  // 制限カウント更新
   STATE.dailyCount++;
   STATE.lastSent = Date.now();
   saveState();
@@ -892,31 +886,23 @@ async function sendMessage() {
   startCooldown(interval);
 
   try {
-    // Deno Deploy APIへリクエスト
     const res = await fetch('https://wise-lamb-60.kuiria728-stack.deno.net', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         messages: STATE.messages,
-        systemPrompt: sysPrompt || "あなたは世界最高のエンジニアです。HTML/CSS/JSのコードを出力する際は、必ず ```html ... ``` という形式で囲んでください。",
+        systemPrompt: sysPrompt || "あなたは世界最高のエンジニアです。HTML/CSS/JSのコードを出力する際は、必ず ```html ... ``` 形式で囲ってください。",
       }),
     });
 
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(errText || '通信エラーが発生しました');
-    }
+    if (!res.ok) throw new Error('通信エラー');
 
     removeTyping();
-
-    // AI用の空バブルを作成
     const contentEl = renderMessage('ai', ''); 
-    
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let fullReply = "";
 
-    // ストリーミング読み取り
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -930,24 +916,19 @@ async function sendMessage() {
             const content = json.choices[0]?.delta?.content || "";
             if (content) {
               fullReply += content;
-              // ストリーミング中は簡易的にテキスト表示
-              contentEl.innerText = fullReply; 
+              contentEl.innerText = fullReply; // ストリーミング中は安全なinnerTextを使用
               document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
             }
           } catch (e) {}
         }
       }
     }
-
-    // 全文が届いたら、最後にコードブロック等のリッチ描画に切り替える
     renderAIContent(contentEl, fullReply);
     STATE.messages.push({ role: 'assistant', content: fullReply });
 
   } catch (err) {
-    console.error("API Error:", err);
     removeTyping();
     showToast('エラー: ' + err.message, 'error');
-    STATE.messages.pop();
   } finally {
     STATE.isLoading = false;
     document.getElementById('send-btn').disabled = false;
@@ -992,13 +973,13 @@ function closeProModalOutside(e) { if (e.target === document.getElementById('pro
 
 function activatePro() {
   const key = document.getElementById('pro-key-input').value.trim();
-  if (!key) { showToast('キーを入力してください', 'error'); return; }
+  if (!key) return;
   STATE.isPro = true;
   STATE.proKey = key;
   saveState();
   updateUI();
   closeProModal();
-  showToast('プロプランを有効にしました ✦', 'success');
+  showToast('Proプラン有効', 'success');
 }
 
 function showToast(msg, type = '') {
@@ -1025,9 +1006,6 @@ function startCooldown(ms) {
 }
 let cooldownTimer;
 
-// ─────────────────────────────────────────
-//  5. 起動処理
-// ─────────────────────────────────────────
 loadState();
 document.getElementById('user-input').focus();
 </script>
