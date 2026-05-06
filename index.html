@@ -1,952 +1,123 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>自分でツクール — AIチャットボット</title>
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;700;900&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet" />
-<style>
-  /* ===== RESET & BASE ===== */
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-  :root {
-    --bg:        #0a0a0f;
-    --surface:   #111118;
-    --surface2:  #18181f;
-    --border:    #2a2a38;
-    --accent:    #7c6aff;
-    --accent2:   #ff6ab0;
-    --accent3:   #6affcc;
-    --text:      #e8e8f0;
-    --muted:     #6b6b80;
-    --user-bg:   #1e1830;
-    --ai-bg:     #111820;
-    --error:     #ff4f6a;
-    --radius:    14px;
-    --font-ja:   'Zen Kaku Gothic New', sans-serif;
-    --font-mono: 'Space Mono', monospace;
-  }
-
-  html, body {
-    height: 100%;
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--font-ja);
-    overflow: hidden;
-  }
-
-  /* ===== NOISE TEXTURE OVERLAY ===== */
-  body::before {
-    content: '';
-    position: fixed; inset: 0;
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
-    pointer-events: none; z-index: 9999; opacity: 0.5;
-  }
-
-  /* ===== LAYOUT ===== */
-  #app {
-    display: grid;
-    grid-template-rows: auto 1fr auto;
-    height: 100vh;
-    max-width: 860px;
-    margin: 0 auto;
-    padding: 0 16px;
-  }
-
-  /* ===== HEADER ===== */
-  header {
-    padding: 20px 0 16px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    border-bottom: 1px solid var(--border);
-    gap: 12px;
-    flex-wrap: wrap;
-  }
-
-  .brand {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .logo-mark {
-    width: 36px; height: 36px;
-    background: linear-gradient(135deg, var(--accent), var(--accent2));
-    border-radius: 10px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 18px;
-    flex-shrink: 0;
-    box-shadow: 0 0 16px #7c6aff44;
-  }
-
-  h1 {
-    font-size: 1.1rem;
-    font-weight: 900;
-    letter-spacing: -0.02em;
-    line-height: 1.1;
-  }
-
-  h1 span {
-    display: block;
-    font-size: 0.65rem;
-    font-weight: 400;
-    color: var(--muted);
-    letter-spacing: 0.05em;
-    margin-top: 2px;
-  }
-
-  .header-right {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-
-  /* ===== BADGES ===== */
-  .badge {
-    font-family: var(--font-mono);
-    font-size: 0.65rem;
-    padding: 3px 8px;
-    border-radius: 100px;
-    border: 1px solid;
-    white-space: nowrap;
-  }
-
-  .badge-model {
-    border-color: var(--accent);
-    color: var(--accent);
-    background: #7c6aff12;
-  }
-
-  .badge-pro {
-    border-color: var(--accent2);
-    color: var(--accent2);
-    background: #ff6ab012;
-    display: none;
-  }
-
-  #rate-display {
-    font-family: var(--font-mono);
-    font-size: 0.65rem;
-    color: var(--muted);
-    white-space: nowrap;
-  }
-
-  /* ===== SYSTEM PROMPT PANEL ===== */
-  #system-panel {
-    border-bottom: 1px solid var(--border);
-    padding: 10px 0;
-  }
-
-  .system-toggle {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    cursor: pointer;
-    color: var(--muted);
-    font-size: 0.78rem;
-    font-family: var(--font-mono);
-    user-select: none;
-    transition: color 0.2s;
-    background: none; border: none;
-    padding: 4px 0;
-  }
-
-  .system-toggle:hover { color: var(--text); }
-
-  .toggle-arrow {
-    display: inline-block;
-    transition: transform 0.25s;
-    font-size: 0.7rem;
-  }
-  .system-toggle.open .toggle-arrow { transform: rotate(90deg); }
-
-  #system-body {
-    display: none;
-    padding-top: 8px;
-    animation: slideDown 0.2s ease;
-  }
-  #system-body.open { display: block; }
-
-  @keyframes slideDown {
-    from { opacity: 0; transform: translateY(-6px); }
-    to   { opacity: 1; transform: translateY(0); }
-  }
-
-  #system-input {
-    width: 100%;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    color: var(--text);
-    font-family: var(--font-ja);
-    font-size: 0.82rem;
-    padding: 10px 14px;
-    resize: vertical;
-    min-height: 72px;
-    outline: none;
-    transition: border-color 0.2s;
-    line-height: 1.6;
-  }
-  #system-input:focus { border-color: var(--accent); }
-  #system-input::placeholder { color: var(--muted); }
-
-  /* ===== CHAT MESSAGES ===== */
-  #messages {
-    overflow-y: auto;
-    padding: 20px 0;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    scroll-behavior: smooth;
-  }
-
-  #messages::-webkit-scrollbar { width: 4px; }
-  #messages::-webkit-scrollbar-track { background: transparent; }
-  #messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
-
-  /* ===== MESSAGE BUBBLES ===== */
-  .msg {
-    display: flex;
-    gap: 10px;
-    animation: msgIn 0.3s cubic-bezier(0.34, 1.4, 0.64, 1);
-  }
-
-  @keyframes msgIn {
-    from { opacity: 0; transform: translateY(10px) scale(0.98); }
-    to   { opacity: 1; transform: translateY(0) scale(1); }
-  }
-
-  .msg-avatar {
-    width: 30px; height: 30px;
-    border-radius: 8px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 14px;
-    flex-shrink: 0;
-    margin-top: 2px;
-  }
-
-  .msg.user { flex-direction: row-reverse; }
-
-  .msg.user .msg-avatar {
-    background: linear-gradient(135deg, var(--accent), var(--accent2));
-  }
-
-  .msg.ai .msg-avatar {
-    background: linear-gradient(135deg, var(--accent3), var(--accent));
-  }
-
-  .msg-bubble {
-    max-width: 78%;
-    padding: 12px 16px;
-    border-radius: var(--radius);
-    font-size: 0.9rem;
-    line-height: 1.7;
-    border: 1px solid var(--border);
-  }
-
-  .msg.user .msg-bubble {
-    background: var(--user-bg);
-    border-color: #3a2860;
-    border-bottom-right-radius: 4px;
-  }
-
-  .msg.ai .msg-bubble {
-    background: var(--ai-bg);
-    border-color: #1e2830;
-    border-bottom-left-radius: 4px;
-  }
-
-  .msg-meta {
-    font-family: var(--font-mono);
-    font-size: 0.6rem;
-    color: var(--muted);
-    margin-top: 6px;
-  }
-
-  /* Thinking block */
-  .thinking-block {
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    color: var(--muted);
-    border-left: 2px solid var(--accent);
-    padding: 6px 10px;
-    margin-bottom: 10px;
-    background: #7c6aff08;
-    border-radius: 0 6px 6px 0;
-    white-space: pre-wrap;
-    word-break: break-word;
-    max-height: 120px;
-    overflow-y: auto;
-  }
-
-  .think-label {
-    font-size: 0.6rem;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: var(--accent);
-    margin-bottom: 4px;
-  }
-
-  /* Code block */
-  .msg-bubble pre {
-    background: #0d0d14;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 10px 12px;
-    margin: 8px 0;
-    overflow-x: auto;
-    font-family: var(--font-mono);
-    font-size: 0.78rem;
-    line-height: 1.5;
-    white-space: pre;
-  }
-
-  .msg-bubble code {
-    font-family: var(--font-mono);
-    font-size: 0.83em;
-    background: #7c6aff18;
-    padding: 1px 5px;
-    border-radius: 4px;
-    color: var(--accent3);
-  }
-
-  .msg-bubble pre code { background: none; padding: 0; color: inherit; }
-
-  /* Typing indicator */
-  .typing-dot {
-    display: inline-block;
-    width: 6px; height: 6px;
-    border-radius: 50%;
-    background: var(--accent);
-    margin: 0 2px;
-    animation: blink 1.2s infinite;
-  }
-  .typing-dot:nth-child(2) { animation-delay: 0.2s; background: var(--accent2); }
-  .typing-dot:nth-child(3) { animation-delay: 0.4s; background: var(--accent3); }
-
-  @keyframes blink {
-    0%, 100% { opacity: 0.2; transform: scale(0.8); }
-    50%       { opacity: 1;   transform: scale(1.1); }
-  }
-
-  /* Error message */
-  .msg-error .msg-bubble {
-    background: #200a10;
-    border-color: var(--error);
-    color: #ff8fa0;
-  }
-
-  /* ===== EMPTY STATE ===== */
-  #empty-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    flex: 1;
-    text-align: center;
-    gap: 16px;
-    color: var(--muted);
-    padding: 40px 20px;
-    animation: fadeIn 0.5s ease;
-  }
-
-  @keyframes fadeIn {
-    from { opacity: 0; } to { opacity: 1; }
-  }
-
-  .empty-icon {
-    font-size: 3rem;
-    filter: grayscale(0.3);
-  }
-
-  .empty-title {
-    font-size: 1.1rem;
-    font-weight: 700;
-    color: var(--text);
-  }
-
-  .empty-sub {
-    font-size: 0.82rem;
-    line-height: 1.6;
-    max-width: 320px;
-  }
-
-  .suggestion-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    justify-content: center;
-    margin-top: 4px;
-  }
-
-  .chip {
-    font-size: 0.75rem;
-    padding: 6px 14px;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 100px;
-    cursor: pointer;
-    transition: all 0.2s;
-    color: var(--text);
-  }
-  .chip:hover {
-    border-color: var(--accent);
-    color: var(--accent);
-    background: #7c6aff10;
-  }
-
-  /* ===== INPUT AREA ===== */
-  footer {
-    padding: 12px 0 20px;
-    border-top: 1px solid var(--border);
-  }
-
-  .input-row {
-    display: flex;
-    align-items: flex-end;
-    gap: 10px;
-  }
-
-  #user-input {
-    flex: 1;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    color: var(--text);
-    font-family: var(--font-ja);
-    font-size: 0.9rem;
-    padding: 12px 16px;
-    resize: none;
-    outline: none;
-    max-height: 200px;
-    min-height: 48px;
-    transition: border-color 0.2s, box-shadow 0.2s;
-    line-height: 1.5;
-    overflow-y: auto;
-  }
-  #user-input:focus {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px #7c6aff18;
-  }
-  #user-input::placeholder { color: var(--muted); }
-
-  .send-btn {
-    width: 48px; height: 48px;
-    border-radius: 12px;
-    background: linear-gradient(135deg, var(--accent), var(--accent2));
-    border: none;
-    cursor: pointer;
-    display: flex; align-items: center; justify-content: center;
-    flex-shrink: 0;
-    transition: transform 0.15s, box-shadow 0.15s, opacity 0.2s;
-    box-shadow: 0 4px 16px #7c6aff44;
-    font-size: 18px;
-  }
-  .send-btn:hover:not(:disabled) { transform: scale(1.05); box-shadow: 0 6px 24px #7c6aff66; }
-  .send-btn:active:not(:disabled) { transform: scale(0.96); }
-  .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-
-  .clear-btn {
-    background: none;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    color: var(--muted);
-    cursor: pointer;
-    padding: 0 14px;
-    height: 48px;
-    font-size: 0.75rem;
-    font-family: var(--font-mono);
-    transition: all 0.2s;
-    white-space: nowrap;
-    flex-shrink: 0;
-  }
-  .clear-btn:hover { border-color: var(--error); color: var(--error); }
-
-  .footer-meta {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-top: 8px;
-    font-family: var(--font-mono);
-    font-size: 0.62rem;
-    color: var(--muted);
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-
-  /* ===== PRO MODAL ===== */
-  #modal-overlay {
-    position: fixed; inset: 0;
-    background: #00000088;
-    backdrop-filter: blur(4px);
-    z-index: 1000;
-    display: none;
-    align-items: center;
-    justify-content: center;
-    padding: 20px;
-  }
-  #modal-overlay.open { display: flex; }
-
-  .modal {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 20px;
-    padding: 28px;
-    max-width: 380px;
-    width: 100%;
-    animation: modalIn 0.25s cubic-bezier(0.34, 1.4, 0.64, 1);
-  }
-
-  @keyframes modalIn {
-    from { opacity: 0; transform: scale(0.92) translateY(10px); }
-    to   { opacity: 1; transform: scale(1) translateY(0); }
-  }
-
-  .modal h2 {
-    font-size: 1rem;
-    font-weight: 900;
-    margin-bottom: 6px;
-  }
-
-  .modal p {
-    font-size: 0.8rem;
-    color: var(--muted);
-    margin-bottom: 16px;
-    line-height: 1.6;
-  }
-
-  .modal-input {
-    width: 100%;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    color: var(--text);
-    font-family: var(--font-mono);
-    font-size: 0.85rem;
-    padding: 10px 14px;
-    outline: none;
-    margin-bottom: 12px;
-    transition: border-color 0.2s;
-  }
-  .modal-input:focus { border-color: var(--accent2); }
-
-  .modal-btns { display: flex; gap: 10px; }
-
-  .btn-primary {
-    flex: 1;
-    padding: 10px;
-    background: linear-gradient(135deg, var(--accent), var(--accent2));
-    border: none;
-    border-radius: 10px;
-    color: white;
-    font-weight: 700;
-    cursor: pointer;
-    font-family: var(--font-ja);
-    font-size: 0.85rem;
-    transition: opacity 0.2s;
-  }
-  .btn-primary:hover { opacity: 0.85; }
-
-  .btn-ghost {
-    padding: 10px 16px;
-    background: none;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    color: var(--muted);
-    cursor: pointer;
-    font-family: var(--font-ja);
-    font-size: 0.85rem;
-    transition: border-color 0.2s;
-  }
-  .btn-ghost:hover { border-color: var(--text); color: var(--text); }
-
-  .pro-btn {
-    background: none;
-    border: 1px solid var(--accent2);
-    border-radius: 100px;
-    color: var(--accent2);
-    font-family: var(--font-mono);
-    font-size: 0.62rem;
-    padding: 3px 10px;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-  .pro-btn:hover { background: #ff6ab018; }
-
-  /* ===== SCROLLBAR ===== */
-  * { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
-
-  /* ===== RESPONSIVE ===== */
-  @media (max-width: 520px) {
-    .msg-bubble { max-width: 90%; font-size: 0.85rem; }
-    h1 { font-size: 0.95rem; }
-  }
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>自分でツクール</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;700;900&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
-<div id="app">
 
-  <!-- HEADER -->
-  <header>
-    <div class="brand">
-      <div class="logo-mark">🛠️</div>
-      <h1>
-        自分でツクール
-        <span>チャットボットに指示するだけで使えるよ！</span>
-      </h1>
-    </div>
-    <div class="header-right">
-      <span class="badge badge-model" id="model-badge">DeepSeek-R1</span>
-      <span class="badge badge-pro" id="pro-badge">✦ PRO</span>
-      <span id="rate-display">—</span>
-      <button class="pro-btn" onclick="openProModal()">PRO</button>
+  <!-- ヘッダー -->
+  <header class="header">
+    <div class="header-inner">
+      <div class="logo">
+        <span class="logo-icon">⚡</span>
+        <span class="logo-text">自分でツクール</span>
+      </div>
+      <div class="header-right">
+        <button class="btn-pro" id="proBtn" title="プロプラン">
+          <span class="pro-icon">👑</span>
+          <span class="pro-label">PRO</span>
+        </button>
+        <div class="usage-badge" id="usageBadge">
+          <span id="usageCount">—</span>/<span id="usageLimit">250</span>
+        </div>
+      </div>
     </div>
   </header>
 
-  <!-- SYSTEM PROMPT -->
-  <div id="system-panel">
-    <button class="system-toggle" id="sys-toggle" onclick="toggleSystem()">
-      <span class="toggle-arrow">▶</span>
-      システムプロンプト（AIへの指示）を設定する
-    </button>
-    <div id="system-body">
-      <textarea id="system-input" rows="3"
-        placeholder="例：あなたは日本語専門の丁寧なアシスタントです。回答は必ず箇条書きで。"></textarea>
-    </div>
-  </div>
+  <!-- メインレイアウト -->
+  <main class="main">
 
-  <!-- MESSAGES -->
-  <div id="messages">
-    <div id="empty-state">
-      <div class="empty-icon">✦</div>
-      <div class="empty-title">なんでも聞いてみよう</div>
-      <div class="empty-sub">システムプロンプトでAIの個性をカスタマイズ。<br/>DeepSeek-R1が推論して答えます。</div>
-      <div class="suggestion-chips">
-        <button class="chip" onclick="sendChip('Pythonで簡単なWebスクレイパーを書いて')">Pythonスクレイパー</button>
-        <button class="chip" onclick="sendChip('俳句を3つ作って')">俳句を作る</button>
-        <button class="chip" onclick="sendChip('マーケティングの戦略を5つ提案して')">マーケ戦略</button>
-        <button class="chip" onclick="sendChip('量子コンピューターをわかりやすく説明して')">量子コンピューター</button>
+    <!-- サイドバー：チャット -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h2 class="sidebar-title">チャット</h2>
+        <button class="btn-clear" id="clearBtn" title="会話をリセット">🗑</button>
+      </div>
+
+      <!-- システムプロンプト設定 -->
+      <div class="system-area">
+        <label class="system-label">ボットへの指示（システムプロンプト）</label>
+        <textarea
+          id="systemPrompt"
+          class="system-input"
+          placeholder="例：あなたは料理専門家です。レシピを日本語で丁寧に教えてください。"
+          rows="3"
+        ></textarea>
+        <div class="mode-tabs">
+          <button class="mode-tab active" data-mode="chat">💬 チャット</button>
+          <button class="mode-tab" data-mode="html">🌐 HTML生成</button>
+        </div>
+      </div>
+
+      <!-- メッセージ一覧 -->
+      <div class="messages" id="messages">
+        <div class="welcome-msg">
+          <div class="welcome-icon">✨</div>
+          <p>システムプロンプトで<br>ボットに指示を出して、<br>会話を始めよう！</p>
+        </div>
+      </div>
+
+      <!-- 入力エリア -->
+      <div class="input-area">
+        <div class="input-wrap">
+          <textarea
+            id="userInput"
+            class="user-input"
+            placeholder="メッセージを入力..."
+            rows="2"
+          ></textarea>
+          <button class="btn-send" id="sendBtn">
+            <span class="send-icon">↑</span>
+          </button>
+        </div>
+        <div class="input-footer">
+          <span id="statusMsg" class="status-msg"></span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- メインエリア：プレビュー -->
+    <section class="preview-section" id="previewSection">
+      <div class="preview-header">
+        <h2 class="preview-title">プレビュー</h2>
+        <div class="preview-actions" id="previewActions" style="display:none">
+          <button class="btn-action" id="openTabBtn">🔗 新しいタブで開く</button>
+          <button class="btn-action" id="downloadBtn">⬇ ダウンロード</button>
+          <button class="btn-action secondary" id="copyHtmlBtn">📋 HTMLをコピー</button>
+        </div>
+      </div>
+      <div class="preview-body" id="previewBody">
+        <div class="preview-empty">
+          <div class="empty-icon">🎨</div>
+          <p>HTMLモードで生成すると<br>ここにプレビューが表示されます</p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- プロプランモーダル -->
+  <div class="modal-overlay" id="proModal">
+    <div class="modal">
+      <h3 class="modal-title">👑 プロプラン</h3>
+      <p class="modal-desc">シークレットキーを入力すると、制限が緩和されます。</p>
+      <ul class="modal-features">
+        <li>✅ 1日1,000回まで利用可能</li>
+        <li>✅ 1分間に5回まで送信可能</li>
+      </ul>
+      <input type="password" id="proKeyInput" class="modal-input" placeholder="シークレットキーを入力">
+      <div class="modal-buttons">
+        <button class="btn-modal-primary" id="proConfirmBtn">確認</button>
+        <button class="btn-modal-secondary" id="proCloseBtn">キャンセル</button>
       </div>
     </div>
   </div>
 
-  <!-- INPUT -->
-  <footer>
-    <div class="input-row">
-      <textarea id="user-input" placeholder="メッセージを入力… (Shift+Enterで改行)" rows="1"
-        onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
-      <button class="clear-btn" onclick="clearChat()" title="会話をクリア">🗑 クリア</button>
-      <button class="send-btn" id="send-btn" onclick="sendMessage()" title="送信">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="22" y1="2" x2="11" y2="13"></line>
-          <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-        </svg>
-      </button>
-    </div>
-    <div class="footer-meta">
-      <span>Powered by SambaNova × DeepSeek-R1</span>
-      <span id="char-count">0文字</span>
-    </div>
-  </footer>
-</div>
-
-<!-- PRO MODAL -->
-<div id="modal-overlay" onclick="closeProModal(event)">
-  <div class="modal">
-    <h2>✦ PROプランを有効化</h2>
-    <p>シークレットキーを入力すると、1日1000回・1分5回の上限でご利用いただけます。</p>
-    <input type="password" class="modal-input" id="pro-key-input" placeholder="シークレットキーを入力…" />
-    <div class="modal-btns">
-      <button class="btn-ghost" onclick="closeProModal()">キャンセル</button>
-      <button class="btn-primary" onclick="applyProKey()">有効化</button>
-    </div>
-  </div>
-</div>
-
-<script>
-// ===== STATE =====
-let history = [];
-let isLoading = false;
-let proKey = localStorage.getItem('proKey') || '';
-let isPro = false;
-
-const API_URL = '/api/chat'; // Vercelサーバーレス関数
-
-// ===== INIT =====
-window.onload = () => {
-  if (proKey) {
-    applyProKeyQuiet(proKey);
-  }
-  updateRateDisplay(null);
-  document.getElementById('user-input').focus();
-};
-
-// ===== UI HELPERS =====
-function updateRateDisplay(data) {
-  const el = document.getElementById('rate-display');
-  if (!data) {
-    el.textContent = '—';
-    return;
-  }
-  const limit = data.isPro ? 1000 : 250;
-  const remaining = data.dailyRemaining ?? '?';
-  el.textContent = `残り ${remaining}/${limit} 回`;
-}
-
-function toggleSystem() {
-  const body = document.getElementById('system-body');
-  const toggle = document.getElementById('sys-toggle');
-  body.classList.toggle('open');
-  toggle.classList.toggle('open');
-}
-
-function autoResize(el) {
-  el.style.height = 'auto';
-  el.style.height = Math.min(el.scrollHeight, 200) + 'px';
-  document.getElementById('char-count').textContent = el.value.length + '文字';
-}
-
-function handleKey(e) {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage();
-  }
-}
-
-function sendChip(text) {
-  document.getElementById('user-input').value = text;
-  autoResize(document.getElementById('user-input'));
-  sendMessage();
-}
-
-function clearChat() {
-  history = [];
-  const msgs = document.getElementById('messages');
-  msgs.innerHTML = '';
-  showEmptyState();
-}
-
-function showEmptyState() {
-  const msgs = document.getElementById('messages');
-  if (msgs.querySelector('.msg')) return;
-  if (msgs.querySelector('#empty-state')) return;
-  msgs.innerHTML = `
-    <div id="empty-state">
-      <div class="empty-icon">✦</div>
-      <div class="empty-title">なんでも聞いてみよう</div>
-      <div class="empty-sub">システムプロンプトでAIの個性をカスタマイズ。<br/>DeepSeek-R1が推論して答えます。</div>
-      <div class="suggestion-chips">
-        <button class="chip" onclick="sendChip('Pythonで簡単なWebスクレイパーを書いて')">Pythonスクレイパー</button>
-        <button class="chip" onclick="sendChip('俳句を3つ作って')">俳句を作る</button>
-        <button class="chip" onclick="sendChip('マーケティングの戦略を5つ提案して')">マーケ戦略</button>
-        <button class="chip" onclick="sendChip('量子コンピューターをわかりやすく説明して')">量子コンピューター</button>
-      </div>
-    </div>`;
-}
-
-// ===== MESSAGE RENDERING =====
-function removeEmptyState() {
-  const el = document.getElementById('empty-state');
-  if (el) el.remove();
-}
-
-function appendMessage(role, content, meta = '') {
-  removeEmptyState();
-  const msgs = document.getElementById('messages');
-
-  const div = document.createElement('div');
-  div.className = `msg ${role}`;
-
-  const avatar = document.createElement('div');
-  avatar.className = 'msg-avatar';
-  avatar.textContent = role === 'user' ? '😊' : '🤖';
-
-  const bubble = document.createElement('div');
-  bubble.className = 'msg-bubble';
-
-  if (role === 'ai') {
-    bubble.innerHTML = renderAIContent(content);
-  } else {
-    bubble.textContent = content;
-  }
-
-  if (meta) {
-    const metaEl = document.createElement('div');
-    metaEl.className = 'msg-meta';
-    metaEl.textContent = meta;
-    bubble.appendChild(metaEl);
-  }
-
-  div.appendChild(avatar);
-  div.appendChild(bubble);
-  msgs.appendChild(div);
-  msgs.scrollTop = msgs.scrollHeight;
-  return div;
-}
-
-function renderAIContent(text) {
-  // DeepSeek-R1の<think>タグを処理
-  let html = '';
-  const thinkMatch = text.match(/<think>([\s\S]*?)<\/think>/i);
-  if (thinkMatch) {
-    const thinking = thinkMatch[1].trim();
-    if (thinking) {
-      html += `<div class="thinking-block"><div class="think-label">💭 思考プロセス</div>${escHtml(thinking)}</div>`;
-    }
-    text = text.replace(/<think>[\s\S]*?<\/think>/i, '').trim();
-  }
-
-  // コードブロック
-  text = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
-    return `<pre><code class="lang-${lang}">${escHtml(code.trim())}</code></pre>`;
-  });
-
-  // インラインコード
-  text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
-
-  // 改行
-  text = text.replace(/\n/g, '<br/>');
-
-  return html + text;
-}
-
-function escHtml(s) {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-function appendTyping() {
-  removeEmptyState();
-  const msgs = document.getElementById('messages');
-  const div = document.createElement('div');
-  div.className = 'msg ai';
-  div.id = 'typing-indicator';
-
-  const avatar = document.createElement('div');
-  avatar.className = 'msg-avatar';
-  avatar.textContent = '🤖';
-
-  const bubble = document.createElement('div');
-  bubble.className = 'msg-bubble';
-  bubble.innerHTML = '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>';
-
-  div.appendChild(avatar);
-  div.appendChild(bubble);
-  msgs.appendChild(div);
-  msgs.scrollTop = msgs.scrollHeight;
-  return div;
-}
-
-// ===== SEND MESSAGE =====
-async function sendMessage() {
-  if (isLoading) return;
-
-  const input = document.getElementById('user-input');
-  const text = input.value.trim();
-  if (!text) return;
-
-  const systemPrompt = document.getElementById('system-input').value.trim();
-
-  // Append user message
-  appendMessage('user', text);
-  history.push({ role: 'user', content: text });
-
-  // Clear input
-  input.value = '';
-  input.style.height = 'auto';
-  document.getElementById('char-count').textContent = '0文字';
-
-  // Loading state
-  isLoading = true;
-  document.getElementById('send-btn').disabled = true;
-  const typingEl = appendTyping();
-
-  try {
-    const resp = await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messages: history,
-        systemPrompt: systemPrompt || undefined,
-        proKey: proKey || undefined,
-      }),
-    });
-
-    typingEl.remove();
-
-    const data = await resp.json();
-
-    if (!resp.ok) {
-      const errMsg = data.error || `エラー (${resp.status})`;
-      const errDiv = appendMessage('ai', errMsg);
-      errDiv.classList.add('msg-error');
-      updateRateDisplay(data);
-      return;
-    }
-
-    // Update model badge
-    if (data.model) {
-      document.getElementById('model-badge').textContent = data.model.replace('DeepSeek-', 'DS-');
-    }
-
-    // Update rate display
-    updateRateDisplay(data);
-
-    // Append AI response
-    const tokens = data.usage ? `${data.usage.total_tokens ?? '?'} tokens · ${data.model}` : data.model;
-    appendMessage('ai', data.content, tokens);
-
-    // Add to history
-    history.push({ role: 'assistant', content: data.content });
-
-  } catch (err) {
-    typingEl.remove();
-    appendMessage('ai', `ネットワークエラー: ${err.message}`);
-    const lastMsg = document.querySelector('#messages .msg:last-child');
-    if (lastMsg) lastMsg.classList.add('msg-error');
-  } finally {
-    isLoading = false;
-    document.getElementById('send-btn').disabled = false;
-    input.focus();
-  }
-}
-
-// ===== PRO MODAL =====
-function openProModal() {
-  document.getElementById('modal-overlay').classList.add('open');
-  document.getElementById('pro-key-input').value = proKey;
-  setTimeout(() => document.getElementById('pro-key-input').focus(), 100);
-}
-
-function closeProModal(e) {
-  if (e && e.target !== document.getElementById('modal-overlay')) return;
-  document.getElementById('modal-overlay').classList.remove('open');
-}
-
-function applyProKey() {
-  const key = document.getElementById('pro-key-input').value.trim();
-  proKey = key;
-  if (key) {
-    localStorage.setItem('proKey', key);
-    isPro = true;
-    document.getElementById('pro-badge').style.display = 'inline-block';
-    document.getElementById('rate-display').textContent = '残り ?/1000 回';
-  } else {
-    localStorage.removeItem('proKey');
-    isPro = false;
-    document.getElementById('pro-badge').style.display = 'none';
-  }
-  document.getElementById('modal-overlay').classList.remove('open');
-}
-
-function applyProKeyQuiet(key) {
-  if (key) {
-    isPro = true;
-    document.getElementById('pro-badge').style.display = 'inline-block';
-  }
-}
-</script>
+  <script src="/js/app.js"></script>
 </body>
 </html>
