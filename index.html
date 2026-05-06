@@ -660,7 +660,6 @@
 
 <script>
 // ─────────────────────────────────────────
-  //俺も人間やねん！！！！！！！
 //  状態管理
 // ─────────────────────────────────────────
 const STATE = {
@@ -688,7 +687,7 @@ function loadState() {
       STATE.isPro  = p.isPro || false;
       STATE.proKey = p.proKey || '';
     }
-  } catch {}
+  } catch(e) {}
   updateUI();
 }
 
@@ -701,7 +700,7 @@ function saveState() {
       isPro: STATE.isPro,
       proKey: STATE.proKey,
     }));
-  } catch {}
+  } catch(e) {}
 }
 
 function updateUI() {
@@ -720,16 +719,15 @@ function updateUI() {
 }
 
 // ─────────────────────────────────────────
-//  メッセージレンダリング
+//  メッセージ表示用
 // ─────────────────────────────────────────
-function renderMessage(role, content, id = null) {
+function renderMessage(role, content) {
   const welcome = document.getElementById('welcome');
   if (welcome) welcome.remove();
 
   const container = document.getElementById('messages');
   const div = document.createElement('div');
   div.className = `msg ${role}`;
-  if (id) div.id = id;
 
   const avatar = document.createElement('div');
   avatar.className = 'avatar';
@@ -740,63 +738,19 @@ function renderMessage(role, content, id = null) {
   
   const contentDiv = document.createElement('div');
   contentDiv.className = 'message-content';
+  contentDiv.innerHTML = role === 'user' ? content : parseTextMD(content);
+  
   bubble.appendChild(contentDiv);
-
-  if (role === 'user') {
-    contentDiv.textContent = content;
-  } else {
-    renderAIContent(contentDiv, content);
-  }
-
   div.appendChild(avatar);
   div.appendChild(bubble);
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
-  return div;
-}
-
-function renderAIContent(targetEl, content) {
-  targetEl.innerHTML = '';
-  const parts = [];
-  const regex = /```(\w*)\n?([\s\S]*?)```/g;
-  let last = 0;
-  let match;
-
-  while ((match = regex.exec(content)) !== null) {
-    if (match.index > last) { parts.push({ type: 'text', content: content.slice(last, match.index) }); }
-    parts.push({ type: 'code', lang: match[1], code: match[2].trim() });
-    last = regex.lastIndex;
-  }
-  if (last < content.length) { parts.push({ type: 'text', content: content.slice(last) }); }
-
-  for (const part of parts) {
-    if (part.type === 'text') {
-      const wrapper = document.createElement('div');
-      wrapper.innerHTML = parseTextMD(part.content);
-      targetEl.appendChild(wrapper);
-    } else {
-      const isHTML = /html|HTML/.test(part.lang) || /<!DOCTYPE|<html|<head|<body|<div/i.test(part.code);
-      const blockWrap = document.createElement('div');
-      blockWrap.className = 'code-block-wrapper';
-      const pre = document.createElement('pre');
-      const code = document.createElement('code');
-      code.textContent = part.code;
-      pre.appendChild(code);
-      blockWrap.appendChild(pre);
-      if (window.PreviewManager) {
-        const actions = PreviewManager.createCodeActions(part.code, isHTML, 0);
-        blockWrap.appendChild(actions);
-      }
-      targetEl.appendChild(blockWrap);
-    }
-  }
+  return contentDiv; // 後で書き換えるために中身の要素を返す
 }
 
 function parseTextMD(text) {
+  if (!text) return "";
   return text.replace(/`([^`]+)`/g, '<code>$1</code>')
-             .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-             .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-             .replace(/^# (.+)$/gm, '<h1>$1</h1>')
              .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
              .replace(/\n/g, '<br>');
 }
@@ -817,7 +771,7 @@ function removeTyping() {
 }
 
 // ─────────────────────────────────────────
-//  メッセージ送信 (ストリーミング版)
+//  送信処理 (ストリーミング)
 // ─────────────────────────────────────────
 async function sendMessage() {
   if (STATE.isLoading) return;
@@ -842,22 +796,18 @@ async function sendMessage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         messages: STATE.messages,
-        systemPrompt: sysPrompt || undefined
+        systemPrompt: sysPrompt || "あなたは最強のエンジニアです。"
       }),
     });
 
-    if (!res.ok) throw new Error('サーバーエラー');
+    if (!res.ok) throw new Error('通信エラー');
 
     removeTyping();
-
-    // AIメッセージの枠を作成
-    let fullReply = "";
-    const aiMsgId = `ai-${Date.now()}`;
-    const aiDiv = renderMessage('ai', '', aiMsgId);
-    const contentEl = aiDiv.querySelector('.message-content');
-
+    const contentEl = renderMessage('ai', ''); // 空のバブル作成
+    
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
+    let fullReply = "";
 
     while (true) {
       const { done, value } = await reader.read();
@@ -872,18 +822,14 @@ async function sendMessage() {
             const content = json.choices[0]?.delta?.content || "";
             if (content) {
               fullReply += content;
-              // 1文字ずつ反映（コードブロックがある場合は簡易的にテキスト表示）
-              contentEl.innerText = fullReply; 
-              const container = document.getElementById('messages');
-              container.scrollTop = container.scrollHeight;
+              contentEl.innerText = fullReply; // 1文字ずつ反映
+              document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
             }
           } catch (e) {}
         }
       }
     }
     
-    // 最後にしっかりマークダウン描画
-    renderAIContent(contentEl, fullReply);
     STATE.messages.push({ role: 'assistant', content: fullReply });
     STATE.dailyCount++;
     saveState();
@@ -900,8 +846,13 @@ async function sendMessage() {
 }
 
 // ─────────────────────────────────────────
-//  UI操作
+//  各種UI操作 (suggestなどを定義)
 // ─────────────────────────────────────────
+function suggest(text) {
+  document.getElementById('user-input').value = text;
+  sendMessage();
+}
+
 function handleKey(e) {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
@@ -922,12 +873,7 @@ function toggleSys() {
 
 function clearChat() {
   STATE.messages = [];
-  location.reload(); // 簡単のためリロード
-}
-
-function suggest(text) {
-  document.getElementById('user-input').value = text;
-  sendMessage();
+  location.reload(); 
 }
 
 function openProModal() { document.getElementById('pro-modal').classList.add('open'); }
@@ -942,7 +888,7 @@ function activatePro() {
   saveState();
   updateUI();
   closeProModal();
-  showToast('Proプラン有効化', 'success');
+  showToast('Proプラン有効', 'success');
 }
 
 function showToast(msg, type = '') {
@@ -952,6 +898,7 @@ function showToast(msg, type = '') {
   setTimeout(() => { el.className = ''; }, 3000);
 }
 
+// 起動
 loadState();
 </body>
 </html>
