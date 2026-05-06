@@ -911,75 +911,51 @@ function removeTyping() {
 // ─────────────────────────────────────────
 //  メッセージ送信
 // ─────────────────────────────────────────
+// 必ず function の前に "async" がついていることを確認してください
 async function sendMessage() {
-  const input = document.getElementById('user-input');
-  const text = input.value.trim();
-  if (!text || STATE.isLoading) return;
+  if (STATE.isLoading) return;
 
-  // 制限チェック
-  const limit = STATE.isPro ? DAILY_LIMIT.pro : DAILY_LIMIT.free;
-  const interval = STATE.isPro ? INTERVAL_MS.pro : INTERVAL_MS.free;
+  const userInput = document.getElementById('user-input');
+  const text = userInput.value.trim();
+  if (!text) return;
 
-  if (STATE.dailyCount >= limit) {
-    showToast('今日の送信制限に達しました。明日また使ってね！', 'error');
-    return;
-  }
-
-  const now = Date.now();
-  const wait = interval - (now - STATE.lastSent);
-  if (wait > 0) {
-    const secs = Math.ceil(wait / 1000);
-    showToast(`${secs}秒後に送信できます`, 'error');
-    startCooldown(wait);
-    return;
-  }
-
-  // メッセージ追加
-  STATE.messages.push({ role: 'user', content: text });
-  renderMessage('user', text);
-
-  input.value = '';
-  input.style.height = '';
   STATE.isLoading = true;
   document.getElementById('send-btn').disabled = true;
+  userInput.value = '';
+
+  // 自分のメッセージを表示
+  renderMessage('user', text);
+  STATE.messages.push({ role: 'user', content: text });
+  
+  // タイピング中...を表示
   showTyping();
 
-  STATE.dailyCount++;
-  STATE.lastSent = Date.now();
-  saveState();
-  updateUI();
-  startCooldown(interval);
-
-  // APIコール
-  const sysPrompt = document.getElementById('sys-input').value.trim();
-
-try {
+  try {
+    // --- ここから Deno への送信 ---
     const res = await fetch('https://wise-lamb-60.kuiria728-stack.deno.net', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         messages: STATE.messages,
-        systemPrompt: sysPrompt || undefined,
+        systemPrompt: "あなたは最強のエンジニアです。"
       }),
     });
 
-    // ★重要: ここにあった const data = await res.json(); は絶対に消す！★
-
     if (!res.ok) {
       const errorText = await res.text();
-      showToast('エラー: ' + errorText, 'error');
-      removeTyping();
-      STATE.isLoading = false;
-      return;
+      throw new Error(errorText);
     }
 
     removeTyping();
-    // 1文字ずつ追加するための箱
-    let fullReply = "";
-    renderMessage('ai', '...'); // 最初に「...」と表示させる
-    const allAiMessages = document.querySelectorAll('.message.ai');
-    const messageElement = allAiMessages[allAiMessages.length - 1].querySelector('.message-content') || allAiMessages[allAiMessages.length - 1];
 
+    // AIの返答を入れるバブルを作成
+    let fullReply = "";
+    renderMessage('ai', '...'); 
+    const allAiMessages = document.querySelectorAll('.message.ai');
+    const lastAiMessage = allAiMessages[allAiMessages.length - 1];
+    const messageContent = lastAiMessage.querySelector('.message-content') || lastAiMessage;
+
+    // ストリーミング読み取り開始
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
 
@@ -997,26 +973,28 @@ try {
             const content = json.choices[0]?.delta?.content || "";
             if (content) {
               fullReply += content;
-              messageElement.innerText = fullReply; // 1文字ずつ反映
+              messageContent.innerText = fullReply; // 1文字ずつ反映
               window.scrollTo(0, document.body.scrollHeight);
             }
           } catch (e) {
-            // パースエラーは無視
+            // 解析エラーは無視
           }
         }
       }
     }
 
+    // 最終結果を保存
     STATE.messages.push({ role: 'assistant', content: fullReply });
 
   } catch (err) {
     console.error("送信エラー:", err);
     removeTyping();
-    showToast('エラーが発生しました', 'error');
+    showToast('エラーが発生しました: ' + err.message, 'error');
+    STATE.messages.pop(); // 失敗したメッセージを削除
+  } finally {
+    STATE.isLoading = false;
+    document.getElementById('send-btn').disabled = false;
   }
-
-  STATE.isLoading = false;
-  document.getElementById('send-btn').disabled = false;
 }
     // タイピング表示を消して、空のAIメッセージバブルを作成
     removeTyping();
