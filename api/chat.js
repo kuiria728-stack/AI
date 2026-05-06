@@ -12,7 +12,8 @@ const PRO_SECRET = process.env.PRO_SECRET_KEY; // SKProBruで認証
 const SAMBANOVA_BASE = "https://api.sambanova.ai/v1";
 
 // ★重いDeepSeek-R1だとNetlifyの10秒制限に引っかかるため、軽量モデルに一時変更
-const MODEL = "Meta-Llama-3.1-8B-Instruct"; 
+// 【変更後】
+const MODEL = "Meta-Llama-3.3-70B-Instruct";
 // const MODEL = "DeepSeek-R1"; // 動くことが確認できたら、後で戻してテストしてみてください
 
 let keyIndex = 0;
