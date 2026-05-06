@@ -44,8 +44,8 @@ function checkRateLimit(ip, isPro) {
     store.minuteReset = now;
   }
   
-  const dailyLimit = isPro ? 1000 : 250;
-  const minuteLimit = isPro ? 5 : 1;
+  const dailyLimit = isPro ? 10000 : 250;
+  const minuteLimit = isPro ? 300 : 5;
   const intervalMs = isPro ? 12000 : 300000; // Pro: 12秒, Free: 5分
   
   if (store.daily >= dailyLimit) {
