@@ -993,6 +993,7 @@ async function sendMessage() {
                            document.querySelector('.message.ai:last-child .message-content');
 
     // ストリームの読み取り開始
+// (前の処理は省略)
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
 
@@ -1002,44 +1003,44 @@ async function sendMessage() {
         if (done) break;
 
         const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n');
+        console.log("届いたデータ:", chunk); // ★これで中身が見えるようになります
 
+        const lines = chunk.split('\n');
         for (const line of lines) {
           const trimmed = line.trim();
           if (!trimmed || trimmed === 'data: [DONE]') continue;
 
           if (trimmed.startsWith('data: ')) {
             try {
-              const json = JSON.parse(trimmed.substring(6));
-              const content = json.choices[0]?.delta?.content || "";
+              const json = JSON.stringify(trimmed.substring(6)); // 安全のために一度stringify
+              const parsed = JSON.parse(trimmed.substring(6));
+              const content = parsed.choices[0]?.delta?.content || "";
               if (content) {
                 fullReply += content;
-                // 画面上の文字を更新
                 if (messageElement) {
                   messageElement.innerText = fullReply;
+                  window.scrollTo(0, document.body.scrollHeight);
                 }
-                // 自動スクロール
-                window.scrollTo(0, document.body.scrollHeight);
               }
             } catch (e) {
-              // JSONパースエラー（不完全なチャンク）は無視して次へ
+              console.warn("JSON解析失敗(継続可能):", e);
             }
           }
         }
       }
     } catch (streamErr) {
-      console.error("Stream reading error:", streamErr);
+      console.error("ストリーム読み取り中のエラー:", streamErr); // ★これで見えるはず！
     }
 
-    // 最終的な回答を履歴に保存
     STATE.messages.push({ role: 'assistant', content: fullReply });
-    // --- 修正部分ここまで ---
 
   } catch (err) {
     removeTyping();
-    showToast('通信エラーが発生しました', 'error');
+    console.error("送信プロセス全体のエラー:", err); // ★ここが重要！何が起きたかコンソールに出ます
+    showToast('通信エラーが発生しました: ' + err.message, 'error');
     STATE.messages.pop();
   }
+  // (後の処理は省略)
 
   STATE.isLoading = false;
   document.getElementById('send-btn').disabled = false;
