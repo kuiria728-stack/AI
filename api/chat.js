@@ -1,189 +1,209 @@
-// api/chat.js — Vercel Serverless Function
-// SambaNova API rotation (4 keys) + Rate limiting + Pro plan support
+// netlify/functions/chat.js
+// SambaNova API プロキシ - DeepSeek-R1 対応
+// APIキーはNetlify環境変数で管理
 
-const SAMBANOVA_KEYS = [
-  process.env.SAMBA_KEY_1,
-  process.env.SAMBA_KEY_2,
-  process.env.SAMBA_KEY_3,
-  process.env.SAMBA_KEY_4,
-].filter(Boolean);
-
-const PRO_SECRET = process.env.PRO_SECRET_KEY; // プロプラン判定キー
-
-// SambaNovaで利用可能なDeepSeek-R1系モデル（優先順）
-const DEEPSEEK_MODELS = [
-  "DeepSeek-R1",
-  "DeepSeek-R1-Distill-Llama-70B",
-  "DeepSeek-R1-Distill-Qwen-32B",
-  "DeepSeek-R1-Distill-Llama-8B",
+const MODELS = [
+  "deepseek-r1",
+  "deepseek-r1-distill-llama-70b",
+  "Meta-Llama-3.3-70B-Instruct", // fallback
 ];
 
-const SAMBANOVA_BASE_URL = "https://api.sambanova.ai/v1";
-
-// --- In-memory rate limit store (Vercel Edge では揮発性なのでKV推奨だが手軽実装) ---
-// IPベースで管理。サーバー再起動でリセットされる点に注意。
-const rateLimitStore = {};
-
-function getRateLimitKey(ip, isPro) {
-  return `${isPro ? "pro" : "free"}:${ip}`;
+// 複数APIキーをローテーション
+function getApiKeys() {
+  const keys = [];
+  for (let i = 1; i <= 4; i++) {
+    const key = process.env[`SAMBANOVA_API_KEY_${i}`];
+    if (key) keys.push(key);
+  }
+  return keys;
 }
+
+// レート制限ストア（メモリ内 - Netlify Functionsはステートレスなので簡易実装）
+// 本番環境ではKV storeやRedisを推奨
+const rateLimitStore = {};
 
 function checkRateLimit(ip, isPro) {
   const now = Date.now();
-  const key = getRateLimitKey(ip, isPro);
-
-  const dailyLimit = isPro ? 1000 : 250;
-  const intervalMs = isPro ? 60 * 1000 : 5 * 60 * 1000; // pro: 1分, free: 5分
-  const intervalLimit = isPro ? 5 : 1;
-
+  const key = `${ip}_${isPro ? "pro" : "free"}`;
+  
   if (!rateLimitStore[key]) {
-    rateLimitStore[key] = { daily: [], interval: [] };
+    rateLimitStore[key] = { daily: 0, lastReset: now, lastRequest: 0, minute: 0, minuteReset: now };
   }
-
+  
   const store = rateLimitStore[key];
-  const dayAgo = now - 24 * 60 * 60 * 1000;
-  store.daily = store.daily.filter((t) => t > dayAgo);
-  store.interval = store.interval.filter((t) => t > now - intervalMs);
-
-  if (store.daily.length >= dailyLimit) {
-    const resetIn = Math.ceil((store.daily[0] + 24 * 60 * 60 * 1000 - now) / 1000 / 60);
-    return {
-      allowed: false,
-      reason: `1日の上限（${dailyLimit}回）に達しました。約${resetIn}分後にリセットされます。`,
-      dailyRemaining: 0,
-      intervalRemaining: 0,
-    };
+  
+  // 日次リセット（24時間）
+  if (now - store.lastReset > 86400000) {
+    store.daily = 0;
+    store.lastReset = now;
   }
-
-  if (store.interval.length >= intervalLimit) {
-    const waitSec = Math.ceil((store.interval[0] + intervalMs - now) / 1000);
-    return {
-      allowed: false,
-      reason: isPro
-        ? `1分間に${intervalLimit}回まで。あと${waitSec}秒お待ちください。`
-        : `5分間に1回まで。あと${waitSec}秒お待ちください。`,
-      dailyRemaining: dailyLimit - store.daily.length,
-      intervalRemaining: 0,
-    };
+  
+  // 分次リセット（1分）
+  if (now - store.minuteReset > 60000) {
+    store.minute = 0;
+    store.minuteReset = now;
   }
-
-  store.daily.push(now);
-  store.interval.push(now);
-
-  return {
-    allowed: true,
-    dailyRemaining: dailyLimit - store.daily.length,
-    intervalRemaining: intervalLimit - store.interval.length,
+  
+  const dailyLimit = isPro ? 1000 : 250;
+  const minuteLimit = isPro ? 5 : 1;
+  const intervalMs = isPro ? 12000 : 300000; // Pro: 12秒, Free: 5分
+  
+  if (store.daily >= dailyLimit) {
+    return { allowed: false, reason: `1日の上限（${dailyLimit}回）に達しました。明日また来てね！` };
+  }
+  
+  if (store.minute >= minuteLimit) {
+    return { allowed: false, reason: `少し待ってね。${isPro ? "1分に5回" : "5分に1回"}の制限があるよ。` };
+  }
+  
+  if (now - store.lastRequest < intervalMs) {
+    const wait = Math.ceil((intervalMs - (now - store.lastRequest)) / 1000);
+    return { allowed: false, reason: `あと${wait}秒待ってね！` };
+  }
+  
+  store.daily++;
+  store.minute++;
+  store.lastRequest = now;
+  
+  return { 
+    allowed: true, 
+    remaining: dailyLimit - store.daily,
+    dailyLimit
   };
 }
 
-// APIキーローテーション（失敗したら次のキーへ）
-let keyIndex = 0;
-function getNextKey() {
-  const key = SAMBANOVA_KEYS[keyIndex % SAMBANOVA_KEYS.length];
-  keyIndex++;
-  return key;
-}
-
-async function callSambaNova(messages, systemPrompt, retryCount = 0) {
-  if (SAMBANOVA_KEYS.length === 0) {
-    throw new Error("APIキーが設定されていません。");
+async function callSambaNova(apiKey, messages, systemPrompt) {
+  const allMessages = [];
+  
+  if (systemPrompt) {
+    allMessages.push({ role: "system", content: systemPrompt });
   }
+  allMessages.push(...messages);
 
-  const modelIndex = Math.floor(retryCount / SAMBANOVA_KEYS.length);
-  const model = DEEPSEEK_MODELS[modelIndex] || DEEPSEEK_MODELS[DEEPSEEK_MODELS.length - 1];
-  const apiKey = getNextKey();
+  // DeepSeek-R1を試し、失敗したら次のモデルへ
+  for (const model of MODELS) {
+    try {
+      const response = await fetch("https://api.sambanova.ai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: allMessages,
+          max_tokens: 8192,
+          temperature: 0.7,
+          stream: false,
+        }),
+      });
 
-  const body = {
-    model,
-    messages: [
-      ...(systemPrompt ? [{ role: "system", content: systemPrompt }] : []),
-      ...messages,
-    ],
-    max_tokens: 8192,
-    temperature: 0.6,
-    stream: false,
-  };
-
-  const resp = await fetch(`${SAMBANOVA_BASE_URL}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!resp.ok) {
-    const errText = await resp.text();
-    // 429 (rate limit) or 5xx → 別のキーでリトライ
-    const maxRetries = SAMBANOVA_KEYS.length * DEEPSEEK_MODELS.length;
-    if ((resp.status === 429 || resp.status >= 500) && retryCount < maxRetries - 1) {
-      console.warn(`Key/model failed (${resp.status}), retrying... [${retryCount + 1}/${maxRetries}]`);
-      await new Promise((r) => setTimeout(r, 500));
-      return callSambaNova(messages, systemPrompt, retryCount + 1);
+      if (response.ok) {
+        const data = await response.json();
+        return { 
+          success: true, 
+          content: data.choices[0].message.content,
+          model,
+          usage: data.usage
+        };
+      }
+      
+      // レート制限エラーの場合は次のキーへ
+      if (response.status === 429) {
+        return { success: false, status: 429, model };
+      }
+      
+    } catch (e) {
+      console.error(`Model ${model} failed:`, e.message);
     }
-    throw new Error(`SambaNova API エラー (${resp.status}): ${errText}`);
   }
-
-  const data = await resp.json();
-  return {
-    content: data.choices?.[0]?.message?.content || "",
-    model,
-    usage: data.usage,
-  };
+  
+  return { success: false, error: "全モデルで失敗しました" };
 }
 
-export default async function handler(req, res) {
-  // CORS
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Pro-Key");
+exports.handler = async (event, context) => {
+  const headers = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type, X-Pro-Key",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Content-Type": "application/json",
+  };
 
-  if (req.method === "OPTIONS") return res.status(200).end();
-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  if (event.httpMethod === "OPTIONS") {
+    return { statusCode: 200, headers, body: "" };
+  }
+
+  if (event.httpMethod !== "POST") {
+    return { statusCode: 405, headers, body: JSON.stringify({ error: "Method not allowed" }) };
+  }
 
   try {
-    const { messages, systemPrompt, proKey } = req.body || {};
-
-    if (!messages || !Array.isArray(messages)) {
-      return res.status(400).json({ error: "messages が必要です。" });
-    }
-
-    // プロプラン判定
-    const isPro = PRO_SECRET && proKey && proKey === PRO_SECRET;
-
+    const body = JSON.parse(event.body);
+    const { messages, systemPrompt } = body;
+    
+    // プロプランチェック
+    const proKey = event.headers["x-pro-key"] || body.proKey;
+    const isPro = proKey && proKey === process.env.PRO_SECRET_KEY;
+    
     // IPアドレス取得
-    const ip =
-      req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
-      req.headers["x-real-ip"] ||
-      req.socket?.remoteAddress ||
-      "unknown";
-
+    const ip = event.headers["x-forwarded-for"]?.split(",")[0] || "unknown";
+    
     // レート制限チェック
     const rateCheck = checkRateLimit(ip, isPro);
     if (!rateCheck.allowed) {
-      return res.status(429).json({
-        error: rateCheck.reason,
-        dailyRemaining: rateCheck.dailyRemaining,
-        intervalRemaining: rateCheck.intervalRemaining,
-        isPro,
-      });
+      return {
+        statusCode: 429,
+        headers,
+        body: JSON.stringify({ error: rateCheck.reason }),
+      };
     }
 
-    // AI呼び出し
-    const result = await callSambaNova(messages, systemPrompt);
+    // APIキーをローテーション
+    const apiKeys = getApiKeys();
+    if (apiKeys.length === 0) {
+      return {
+        statusCode: 500,
+        headers,
+        body: JSON.stringify({ error: "APIキーが設定されていません" }),
+      };
+    }
 
-    return res.status(200).json({
-      content: result.content,
-      model: result.model,
-      usage: result.usage,
-      dailyRemaining: rateCheck.dailyRemaining,
-      intervalRemaining: rateCheck.intervalRemaining,
-      isPro,
-    });
-  } catch (err) {
-    console.error("Chat error:", err);
-    return res.status(500).json({ error: err.message || "サーバーエラーが発生しました。" });
+    // キーをランダムに選択し、失敗したら次へ
+    let result = null;
+    const shuffled = [...apiKeys].sort(() => Math.random() - 0.5);
+    
+    for (const key of shuffled) {
+      result = await callSambaNova(key, messages, systemPrompt);
+      if (result.success) break;
+      if (result.status !== 429) break; // レート制限以外のエラーはリトライしない
+    }
+
+    if (!result || !result.success) {
+      return {
+        statusCode: 503,
+        headers,
+        body: JSON.stringify({ error: "AIサービスが一時的に利用できません。少し待ってから試してね！" }),
+      };
+    }
+
+    return {
+      statusCode: 200,
+      headers,
+      body: JSON.stringify({
+        content: result.content,
+        model: result.model,
+        remaining: rateCheck.remaining,
+        dailyLimit: rateCheck.dailyLimit,
+        isPro,
+      }),
+    };
+
+  } catch (e) {
+    console.error("Chat function error:", e);
+    return {
+      statusCode: 500,
+      headers,
+      body: JSON.stringify({ error: "サーバーエラーが発生しました" }),
+    };
   }
-}
+};
