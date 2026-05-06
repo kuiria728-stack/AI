@@ -2,10 +2,10 @@
 // SambaNova API を複数キーでローテーション管理
 
 const SAMBANOVA_KEYS = [
-  process.env.SAMBANOVA_KEY_1,
-  process.env.SAMBANOVA_KEY_2,
-  process.env.SAMBANOVA_KEY_3,
-  process.env.SAMBANOVA_KEY_4,
+  process.env.SAMBANOVA_API_KEY_1,
+  process.env.SAMBANOVA_API_KEY_2,
+  process.env.SAMBANOVA_API_KEY_3,
+  process.env.SAMBANOVA_API_KEY_4,
 ].filter(Boolean);
 
 const PRO_SECRET = process.env.PRO_SECRET_KEY; // SKProBruで認証
