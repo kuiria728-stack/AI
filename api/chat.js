@@ -11,7 +11,8 @@ const SAMBANOVA_KEYS = [
 const PRO_SECRET = process.env.PRO_SECRET_KEY; // SKProBruで認証
 
 const SAMBANOVA_BASE = "https://api.sambanova.ai/v1";
-const MODEL = "DeepSeek-R1";
+// const MODEL = "DeepSeek-R1"; // ← これをコメントアウト
+const MODEL = "Llama-3.1-8B-Instruct"; // ← テスト用にこちらに変更
 
 // レート制限ストア（Netlify Functionはステートレスなので簡易実装）
 // 本番ではKV/Redisを推奨。ここではヘッダーベースで処理
