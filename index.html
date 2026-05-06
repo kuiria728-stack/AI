@@ -660,7 +660,7 @@
 
 <script>
 // ─────────────────────────────────────────
-//  状態管理
+//  1. 状態管理 (STATE)
 // ─────────────────────────────────────────
 const STATE = {
   messages: [],          // {role, content}
@@ -675,7 +675,7 @@ const STATE = {
 const DAILY_LIMIT = { free: 250, pro: 35000 };
 const INTERVAL_MS = { free: 5 * 60 * 1000, pro: (60 / 90) * 1000 };
 
-// ローカルストレージで制限を保存
+// ローカルストレージから設定を読み込む
 function loadState() {
   try {
     const d = localStorage.getItem('jibuntsukuru_state');
@@ -689,10 +689,13 @@ function loadState() {
       STATE.isPro  = p.isPro || false;
       STATE.proKey = p.proKey || '';
     }
-  } catch {}
+  } catch(e) {
+    console.error("State load error:", e);
+  }
   updateUI();
 }
 
+// 設定をローカルストレージに保存
 function saveState() {
   try {
     localStorage.setItem('jibuntsukuru_state', JSON.stringify({
@@ -702,12 +705,12 @@ function saveState() {
       isPro: STATE.isPro,
       proKey: STATE.proKey,
     }));
-  } catch {}
+  } catch(e) {
+    console.error("State save error:", e);
+  }
 }
 
-// ─────────────────────────────────────────
-//  UI更新
-// ─────────────────────────────────────────
+// UIの表示を更新 (制限数やProバッジ)
 function updateUI() {
   const limit = STATE.isPro ? DAILY_LIMIT.pro : DAILY_LIMIT.free;
   document.getElementById('count-display').textContent = STATE.dailyCount;
@@ -725,48 +728,74 @@ function updateUI() {
 }
 
 // ─────────────────────────────────────────
-//  マークダウン簡易パーサー
+//  2. メッセージ描画 (Rendering)
 // ─────────────────────────────────────────
-function parseMarkdown(text) {
-  const codeBlocks = [];
-  text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
-    const idx = codeBlocks.length;
-    codeBlocks.push({ lang, code: code.trim() });
-    return `\x00CODE${idx}\x00`;
-  });
-  text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
-  text = text.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-  text = text.replace(/^## (.+)$/gm, '<h2>$1</h2>');
-  text = text.replace(/^# (.+)$/gm, '<h1>$1</h1>');
-  text = text.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
-  text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
-  text = text.replace(/^---+$/gm, '<hr>');
-  text = text.replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>');
-  text = text.replace(/^(\s*[-*+] .+\n?)+/gm, m => {
-    const items = m.trim().split('\n').map(l => `<li>${l.replace(/^\s*[-*+] /, '')}</li>`).join('');
-    return `<ul>${items}</ul>`;
-  });
-  text = text.replace(/^(\s*\d+\. .+\n?)+/gm, m => {
-    const items = m.trim().split('\n').map(l => `<li>${l.replace(/^\s*\d+\. /, '')}</li>`).join('');
-    return `<ol>${items}</ol>`;
-  });
-  text = text.replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-  text = text.replace(/\n\n+/g, '</p><p>');
-  text = `<p>${text}</p>`;
-  text = text.replace(/<p><\/p>/g, '');
-  text = text.replace(/\n/g, '<br>');
-  text = text.replace(/\x00CODE(\d+)\x00/g, (_, i) => {
-    const { lang, code } = codeBlocks[i];
-    const escaped = code.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    return `\x00CODEBLOCK:${i}\x00`;
-  });
-  return { html: text, codeBlocks };
+
+// シンプルなマークダウン変換
+function parseTextMD(text) {
+  if (!text) return "";
+  return text
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\n/g, '<br>');
 }
 
-// ─────────────────────────────────────────
-//  メッセージレンダリング
-// ─────────────────────────────────────────
+// AIの回答を構造的に描画 (コードブロック抽出付き)
+function renderAIContent(targetEl, content) {
+  if (!targetEl) return;
+  targetEl.innerHTML = '';
+
+  // DeepSeek等の <think> タグ（思考プロセス）を削除
+  let cleanContent = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+
+  const parts = [];
+  const regex = /```(\w*)\n?([\s\S]*?)```/g;
+  let last = 0;
+  let match;
+
+  // コードブロックを抽出
+  while ((match = regex.exec(cleanContent)) !== null) {
+    if (match.index > last) {
+      parts.push({ type: 'text', content: cleanContent.slice(last, match.index) });
+    }
+    parts.push({ type: 'code', lang: match[1], code: match[2].trim() });
+    last = regex.lastIndex;
+  }
+  if (last < cleanContent.length) {
+    parts.push({ type: 'text', content: cleanContent.slice(last) });
+  }
+
+  // 要素を組み立てて追加
+  for (const part of parts) {
+    if (part.type === 'text') {
+      const wrapper = document.createElement('div');
+      wrapper.innerHTML = parseTextMD(part.content);
+      targetEl.appendChild(wrapper);
+    } else {
+      const isHTML = /html|HTML/.test(part.lang) || /<!DOCTYPE|<html|<head|<body|<div/i.test(part.code);
+      const blockWrap = document.createElement('div');
+      blockWrap.className = 'code-block-wrapper';
+
+      const pre = document.createElement('pre');
+      const code = document.createElement('code');
+      code.textContent = part.code;
+      pre.appendChild(code);
+      blockWrap.appendChild(pre);
+
+      // preview.js の機能を使ってプレビューボタンを追加
+      if (window.PreviewManager) {
+        const actions = PreviewManager.createCodeActions(part.code, isHTML, 0);
+        blockWrap.appendChild(actions);
+      }
+      targetEl.appendChild(blockWrap);
+    }
+  }
+}
+
+// メッセージバブルを画面に追加
 function renderMessage(role, content) {
   const welcome = document.getElementById('welcome');
   if (welcome) welcome.remove();
@@ -781,15 +810,14 @@ function renderMessage(role, content) {
 
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
-
-  // ストリーミング更新のために、中身を保持するdivを作成
+  
   const contentDiv = document.createElement('div');
   contentDiv.className = 'message-content';
 
   if (role === 'user') {
     contentDiv.textContent = content;
   } else {
-    // AIのときは後でストリーミング更新するので、最初は空か初期値
+    // AIの場合は最初は空で作成し、後からストリーミング更新する
     renderAIContent(contentDiv, content);
   }
 
@@ -798,63 +826,8 @@ function renderMessage(role, content) {
   div.appendChild(bubble);
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
-  return contentDiv; // ストリーミング更新用に要素を返す
-}
-
-function renderAIContent(bubble, content) {
-  bubble.innerHTML = '';
-  const parts = [];
-  const regex = /```(\w*)\n?([\s\S]*?)```/g;
-  let last = 0;
-  let match;
-
-  while ((match = regex.exec(content)) !== null) {
-    if (match.index > last) {
-      parts.push({ type: 'text', content: content.slice(last, match.index) });
-    }
-    parts.push({ type: 'code', lang: match[1], code: match[2].trim() });
-    last = regex.lastIndex;
-  }
-  if (last < content.length) {
-    parts.push({ type: 'text', content: content.slice(last) });
-  }
-
-  for (const part of parts) {
-    if (part.type === 'text') {
-      const wrapper = document.createElement('div');
-      wrapper.innerHTML = parseTextMD(part.content);
-      bubble.appendChild(wrapper);
-    } else {
-      const isHTML = /html|HTML/.test(part.lang) || /<!DOCTYPE|<html|<head|<body|<div/i.test(part.code);
-      const blockWrap = document.createElement('div');
-      blockWrap.className = 'code-block-wrapper';
-      const pre = document.createElement('pre');
-      const code = document.createElement('code');
-      code.textContent = part.code;
-      pre.appendChild(code);
-      blockWrap.appendChild(pre);
-      if (window.PreviewManager) {
-        const actions = PreviewManager.createCodeActions(part.code, isHTML, 0);
-        blockWrap.appendChild(actions);
-      }
-      bubble.appendChild(blockWrap);
-    }
-  }
-}
-
-function parseTextMD(text) {
-  if (!text) return "";
-  text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
-  text = text.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-  text = text.replace(/^## (.+)$/gm, '<h2>$1</h2>');
-  text = text.replace(/^# (.+)$/gm, '<h1>$1</h1>');
-  text = text.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
-  text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
-  text = text.replace(/^---+$/gm, '<hr>');
-  text = text.replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>');
-  text = text.replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-  return text.replace(/\n/g, '<br>');
+  
+  return contentDiv; // 更新用要素を返す
 }
 
 function showTyping() {
@@ -873,13 +846,17 @@ function removeTyping() {
 }
 
 // ─────────────────────────────────────────
-//  メッセージ送信 (ストリーミング対応完全版)
+//  3. 送信処理 (ストリーミング対応版)
 // ─────────────────────────────────────────
 async function sendMessage() {
-  const input = document.getElementById('user-input');
-  const text = input.value.trim();
-  if (!text || STATE.isLoading) return;
+  if (STATE.isLoading) return;
 
+  const userInput = document.getElementById('user-input');
+  const text = userInput.value.trim();
+  const sysPrompt = document.getElementById('sys-input').value.trim();
+  if (!text) return;
+
+  // 送信制限チェック
   const limit = STATE.isPro ? DAILY_LIMIT.pro : DAILY_LIMIT.free;
   const interval = STATE.isPro ? INTERVAL_MS.pro : INTERVAL_MS.free;
 
@@ -897,51 +874,49 @@ async function sendMessage() {
     return;
   }
 
-  STATE.messages.push({ role: 'user', content: text });
-  renderMessage('user', text);
-
-  input.value = '';
-  input.style.height = '';
+  // UI更新: 自分のメッセージを表示
   STATE.isLoading = true;
   document.getElementById('send-btn').disabled = true;
+  userInput.value = '';
+  autoResize(userInput);
+
+  renderMessage('user', text);
+  STATE.messages.push({ role: 'user', content: text });
   showTyping();
 
+  // 制限カウント更新
   STATE.dailyCount++;
   STATE.lastSent = Date.now();
   saveState();
   updateUI();
   startCooldown(interval);
 
-  const sysPrompt = document.getElementById('sys-input').value.trim();
-
   try {
-    // URLをDeno DeployのURLに変更
+    // Deno Deploy APIへリクエスト
     const res = await fetch('https://wise-lamb-60.kuiria728-stack.deno.net', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(STATE.isPro ? { 'X-Pro-Key': STATE.proKey } : {}),
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         messages: STATE.messages,
-        systemPrompt: sysPrompt || "あなたは最強のエンジニアです。",
-        proKey: STATE.isPro ? STATE.proKey : undefined,
+        systemPrompt: sysPrompt || "あなたは世界最高のエンジニアです。HTML/CSS/JSのコードを出力する際は、必ず ```html ... ``` という形式で囲んでください。",
       }),
     });
 
     if (!res.ok) {
       const errText = await res.text();
-      throw new Error(errText || '通信エラー');
+      throw new Error(errText || '通信エラーが発生しました');
     }
 
     removeTyping();
-    // AI用の空バブルを作成し、その中身(contentEl)を取得
-    const contentEl = renderMessage('ai', '');
+
+    // AI用の空バブルを作成
+    const contentEl = renderMessage('ai', ''); 
     
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let fullReply = "";
 
+    // ストリーミング読み取り
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -955,7 +930,8 @@ async function sendMessage() {
             const content = json.choices[0]?.delta?.content || "";
             if (content) {
               fullReply += content;
-              contentEl.innerText = fullReply; // リアルタイム更新
+              // ストリーミング中は簡易的にテキスト表示
+              contentEl.innerText = fullReply; 
               document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
             }
           } catch (e) {}
@@ -963,42 +939,29 @@ async function sendMessage() {
       }
     }
 
-    // 最後にマークダウンとして正しく描画し直す
+    // 全文が届いたら、最後にコードブロック等のリッチ描画に切り替える
     renderAIContent(contentEl, fullReply);
     STATE.messages.push({ role: 'assistant', content: fullReply });
 
   } catch (err) {
+    console.error("API Error:", err);
     removeTyping();
-    showToast('通信エラーが発生しました: ' + err.message, 'error');
+    showToast('エラー: ' + err.message, 'error');
     STATE.messages.pop();
+  } finally {
+    STATE.isLoading = false;
+    document.getElementById('send-btn').disabled = false;
   }
-
-  STATE.isLoading = false;
-  document.getElementById('send-btn').disabled = false;
-}
-
-// クールダウン表示
-let cooldownTimer;
-function startCooldown(ms) {
-  clearInterval(cooldownTimer);
-  const end = Date.now() + ms;
-  const el = document.getElementById('cooldown-display');
-
-  cooldownTimer = setInterval(() => {
-    const rem = end - Date.now();
-    if (rem <= 0) {
-      clearInterval(cooldownTimer);
-      el.textContent = '';
-    } else {
-      const s = Math.ceil(rem / 1000);
-      el.textContent = s >= 60 ? `次の送信まで ${Math.floor(s/60)}分${s%60}秒` : `次の送信まで ${s}秒`;
-    }
-  }, 500);
 }
 
 // ─────────────────────────────────────────
-//  UI操作
+//  4. UI操作・ユーティリティ
 // ─────────────────────────────────────────
+function suggest(text) {
+  document.getElementById('user-input').value = text;
+  sendMessage();
+}
+
 function handleKey(e) {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
@@ -1019,48 +982,18 @@ function toggleSys() {
 
 function clearChat() {
   STATE.messages = [];
-  const container = document.getElementById('messages');
-  container.innerHTML = '';
-  container.innerHTML = `<div id="welcome">
-    <span class="big-icon">🛠️</span>
-    <h2>自分でツクール</h2>
-    <p>チャットボットに指示するだけで、なんでも作れるよ！<br>HTMLやアプリ、ツールを一緒に作ってみよう。</p>
-    <div class="suggestion-chips">
-      <div class="chip" onclick="suggest('かっこいいランディングページのHTMLを作って')">🌐 ランディングページ</div>
-      <div class="chip" onclick="suggest('TODOリストアプリのHTMLを作って')">📝 TODOアプリ</div>
-      <div class="chip" onclick="suggest('電卓をHTMLで作って')">🔢 電卓</div>
-      <div class="chip" onclick="suggest('タイマーアプリをHTMLで作って')">⏱️ タイマー</div>
-      <div class="chip" onclick="suggest('マークダウンエディタをHTMLで作って')">📄 MDエディタ</div>
-    </div>
-  </div>`;
-  showToast('会話をリセットしました', 'success');
+  localStorage.removeItem('jibuntsukuru_state');
+  location.reload();
 }
 
-function suggest(text) {
-  document.getElementById('user-input').value = text;
-  sendMessage();
-}
-
-// ─────────────────────────────────────────
-//  Proモーダル
-// ─────────────────────────────────────────
-function openProModal() {
-  document.getElementById('pro-modal').classList.add('open');
-  document.getElementById('pro-key-input').focus();
-}
-
-function closeProModal() {
-  document.getElementById('pro-modal').classList.remove('open');
-}
-
-function closeProModalOutside(e) {
-  if (e.target === document.getElementById('pro-modal')) closeProModal();
-}
+function openProModal() { document.getElementById('pro-modal').classList.add('open'); }
+function closeProModal() { document.getElementById('pro-modal').classList.remove('open'); }
+function closeProModalOutside(e) { if (e.target === document.getElementById('pro-modal')) closeProModal(); }
 
 function activatePro() {
   const key = document.getElementById('pro-key-input').value.trim();
   if (!key) { showToast('キーを入力してください', 'error'); return; }
-  STATE.isPro  = true;
+  STATE.isPro = true;
   STATE.proKey = key;
   saveState();
   updateUI();
@@ -1068,20 +1001,32 @@ function activatePro() {
   showToast('プロプランを有効にしました ✦', 'success');
 }
 
-// ─────────────────────────────────────────
-//  トースト
-// ─────────────────────────────────────────
-let toastTimer;
 function showToast(msg, type = '') {
   const el = document.getElementById('toast');
   el.textContent = msg;
   el.className = `show ${type}`;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.className = ''; }, 3000);
+  setTimeout(() => { el.className = ''; }, 3000);
 }
 
+function startCooldown(ms) {
+  clearInterval(cooldownTimer);
+  const end = Date.now() + ms;
+  const el = document.getElementById('cooldown-display');
+  cooldownTimer = setInterval(() => {
+    const rem = end - Date.now();
+    if (rem <= 0) {
+      clearInterval(cooldownTimer);
+      el.textContent = '';
+    } else {
+      const s = Math.ceil(rem / 1000);
+      el.textContent = s >= 60 ? `次の送信まで ${Math.floor(s/60)}分${s%60}秒` : `次の送信まで ${s}秒`;
+    }
+  }, 500);
+}
+let cooldownTimer;
+
 // ─────────────────────────────────────────
-//  初期化
+//  5. 起動処理
 // ─────────────────────────────────────────
 loadState();
 document.getElementById('user-input').focus();
