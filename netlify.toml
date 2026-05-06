@@ -1,6 +1,6 @@
 [build]
   publish = "."
-  functions = "netlify/functions"
+  functions = "api"  # 画像にあるフォルダ名に合わせる
 
 [dev]
   port = 8888
