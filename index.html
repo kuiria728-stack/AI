@@ -659,68 +659,49 @@
 <script src="preview.js"></script>
 
 <script>
-// ─────────────────────────────────────────
-//  状態管理
-// ─────────────────────────────────────────
+// --- 状態管理 ---
 const STATE = {
   messages: [],
   isPro: false,
   proKey: '',
   dailyCount: 0,
-  lastSent: 0,
   sysOpen: false,
   isLoading: false,
 };
 
-const DAILY_LIMIT = { free: 250, pro: 35000 };
-
+// --- 初期化とUI更新 ---
 function loadState() {
   try {
     const d = localStorage.getItem('jibuntsukuru_state');
     if (d) {
       const p = JSON.parse(d);
-      const today = new Date().toDateString();
-      if (p.date === today) {
-        STATE.dailyCount = p.count || 0;
-        STATE.lastSent   = p.lastSent || 0;
-      }
-      STATE.isPro  = p.isPro || false;
+      STATE.isPro = p.isPro || false;
       STATE.proKey = p.proKey || '';
+      if (p.date === new Date().toDateString()) STATE.dailyCount = p.count || 0;
     }
   } catch(e) {}
   updateUI();
 }
 
 function saveState() {
-  try {
-    localStorage.setItem('jibuntsukuru_state', JSON.stringify({
-      date: new Date().toDateString(),
-      count: STATE.dailyCount,
-      lastSent: STATE.lastSent,
-      isPro: STATE.isPro,
-      proKey: STATE.proKey,
-    }));
-  } catch(e) {}
+  localStorage.setItem('jibuntsukuru_state', JSON.stringify({
+    date: new Date().toDateString(),
+    count: STATE.dailyCount,
+    isPro: STATE.isPro,
+    proKey: STATE.proKey
+  }));
 }
 
 function updateUI() {
-  const limit = STATE.isPro ? DAILY_LIMIT.pro : DAILY_LIMIT.free;
   document.getElementById('count-display').textContent = STATE.dailyCount;
-  document.getElementById('limit-display').textContent = limit;
   const proStatus = document.getElementById('pro-status');
-  const proLabel  = document.getElementById('pro-label');
   if (STATE.isPro) {
     proStatus.classList.add('active');
-    proLabel.textContent = 'Pro ✦';
-  } else {
-    proStatus.classList.remove('active');
-    proLabel.textContent = 'フリー';
+    document.getElementById('pro-label').textContent = 'Pro ✦';
   }
 }
 
-// ─────────────────────────────────────────
-//  メッセージ表示用
-// ─────────────────────────────────────────
+// --- メッセージ表示 ---
 function renderMessage(role, content) {
   const welcome = document.getElementById('welcome');
   if (welcome) welcome.remove();
@@ -728,24 +709,18 @@ function renderMessage(role, content) {
   const container = document.getElementById('messages');
   const div = document.createElement('div');
   div.className = `msg ${role}`;
-
-  const avatar = document.createElement('div');
-  avatar.className = 'avatar';
-  avatar.textContent = role === 'user' ? '😊' : '🤖';
-
-  const bubble = document.createElement('div');
-  bubble.className = 'bubble';
   
-  const contentDiv = document.createElement('div');
-  contentDiv.className = 'message-content';
-  contentDiv.innerHTML = role === 'user' ? content : parseTextMD(content);
+  const avatar = role === 'user' ? '😊' : '🤖';
+  div.innerHTML = `
+    <div class="avatar">${avatar}</div>
+    <div class="bubble">
+      <div class="message-content">${role === 'user' ? content : parseTextMD(content)}</div>
+    </div>
+  `;
   
-  bubble.appendChild(contentDiv);
-  div.appendChild(avatar);
-  div.appendChild(bubble);
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
-  return contentDiv; // 後で書き換えるために中身の要素を返す
+  return div.querySelector('.message-content');
 }
 
 function parseTextMD(text) {
@@ -756,13 +731,11 @@ function parseTextMD(text) {
 }
 
 function showTyping() {
-  const container = document.getElementById('messages');
   const div = document.createElement('div');
   div.className = 'msg ai';
   div.id = 'typing-msg';
   div.innerHTML = `<div class="avatar">🤖</div><div class="bubble"><div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div></div>`;
-  container.appendChild(div);
-  container.scrollTop = container.scrollHeight;
+  document.getElementById('messages').appendChild(div);
 }
 
 function removeTyping() {
@@ -770,21 +743,18 @@ function removeTyping() {
   if (el) el.remove();
 }
 
-// ─────────────────────────────────────────
-//  送信処理 (ストリーミング)
-// ─────────────────────────────────────────
+// --- 送信処理 (ストリーミング対応) ---
 async function sendMessage() {
   if (STATE.isLoading) return;
 
-  const userInput = document.getElementById('user-input');
-  const text = userInput.value.trim();
-  const sysPrompt = document.getElementById('sys-input').value.trim();
+  const input = document.getElementById('user-input');
+  const text = input.value.trim();
   if (!text) return;
 
   STATE.isLoading = true;
   document.getElementById('send-btn').disabled = true;
-  userInput.value = '';
-  autoResize(userInput);
+  input.value = '';
+  autoResize(input);
 
   renderMessage('user', text);
   STATE.messages.push({ role: 'user', content: text });
@@ -796,15 +766,12 @@ async function sendMessage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         messages: STATE.messages,
-        systemPrompt: sysPrompt || "あなたは最強のエンジニアです。"
+        systemPrompt: document.getElementById('sys-input').value.trim() || "あなたは最強のエンジニアです。"
       }),
     });
 
-    if (!res.ok) throw new Error('通信エラー');
-
     removeTyping();
-    const contentEl = renderMessage('ai', ''); // 空のバブル作成
-    
+    const contentEl = renderMessage('ai', '');
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let fullReply = "";
@@ -812,7 +779,6 @@ async function sendMessage() {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-
       const chunk = decoder.decode(value);
       const lines = chunk.split('\n');
       for (const line of lines) {
@@ -822,32 +788,27 @@ async function sendMessage() {
             const content = json.choices[0]?.delta?.content || "";
             if (content) {
               fullReply += content;
-              contentEl.innerText = fullReply; // 1文字ずつ反映
+              contentEl.innerText = fullReply;
               document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
             }
           } catch (e) {}
         }
       }
     }
-    
     STATE.messages.push({ role: 'assistant', content: fullReply });
     STATE.dailyCount++;
     saveState();
     updateUI();
-
   } catch (err) {
-    console.error(err);
     removeTyping();
-    showToast('エラーが発生しました', 'error');
+    showToast('エラーが発生しました');
   } finally {
     STATE.isLoading = false;
     document.getElementById('send-btn').disabled = false;
   }
 }
 
-// ─────────────────────────────────────────
-//  各種UI操作 (suggestなどを定義)
-// ─────────────────────────────────────────
+// --- 各種イベント関数 ---
 function suggest(text) {
   document.getElementById('user-input').value = text;
   sendMessage();
@@ -868,34 +829,18 @@ function autoResize(el) {
 function toggleSys() {
   STATE.sysOpen = !STATE.sysOpen;
   document.getElementById('sys-panel').classList.toggle('open', STATE.sysOpen);
-  document.getElementById('sys-toggle').textContent = STATE.sysOpen ? '✕ 閉じる' : '⚙️ システム';
 }
 
 function clearChat() {
-  STATE.messages = [];
-  location.reload(); 
+  localStorage.removeItem('jibuntsukuru_state');
+  location.reload();
 }
 
-function openProModal() { document.getElementById('pro-modal').classList.add('open'); }
-function closeProModal() { document.getElementById('pro-modal').classList.remove('open'); }
-function closeProModalOutside(e) { if (e.target === document.getElementById('pro-modal')) closeProModal(); }
-
-function activatePro() {
-  const key = document.getElementById('pro-key-input').value.trim();
-  if (!key) return;
-  STATE.isPro = true;
-  STATE.proKey = key;
-  saveState();
-  updateUI();
-  closeProModal();
-  showToast('Proプラン有効', 'success');
-}
-
-function showToast(msg, type = '') {
-  const el = document.getElementById('toast');
-  el.textContent = msg;
-  el.className = `show ${type}`;
-  setTimeout(() => { el.className = ''; }, 3000);
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3000);
 }
 
 // 起動
