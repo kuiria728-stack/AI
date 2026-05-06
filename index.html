@@ -663,7 +663,7 @@
 //  状態管理
 // ─────────────────────────────────────────
 const STATE = {
-  messages: [],          // {role, content}
+  messages: [],
   isPro: false,
   proKey: '',
   dailyCount: 0,
@@ -673,9 +673,7 @@ const STATE = {
 };
 
 const DAILY_LIMIT = { free: 250, pro: 35000 };
-const INTERVAL_MS = { free: 5 * 60 * 1000, pro: (60 / 90) * 1000 };
 
-// ローカルストレージで制限を保存
 function loadState() {
   try {
     const d = localStorage.getItem('jibuntsukuru_state');
@@ -705,14 +703,10 @@ function saveState() {
   } catch {}
 }
 
-// ─────────────────────────────────────────
-//  UI更新
-// ─────────────────────────────────────────
 function updateUI() {
   const limit = STATE.isPro ? DAILY_LIMIT.pro : DAILY_LIMIT.free;
   document.getElementById('count-display').textContent = STATE.dailyCount;
   document.getElementById('limit-display').textContent = limit;
-
   const proStatus = document.getElementById('pro-status');
   const proLabel  = document.getElementById('pro-label');
   if (STATE.isPro) {
@@ -725,75 +719,16 @@ function updateUI() {
 }
 
 // ─────────────────────────────────────────
-//  マークダウン簡易パーサー
-// ─────────────────────────────────────────
-function parseMarkdown(text) {
-  // コードブロック → プレースホルダー
-  const codeBlocks = [];
-  text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
-    const idx = codeBlocks.length;
-    codeBlocks.push({ lang, code: code.trim() });
-    return `\x00CODE${idx}\x00`;
-  });
-
-  // インラインコード
-  text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
-
-  // 見出し
-  text = text.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-  text = text.replace(/^## (.+)$/gm, '<h2>$1</h2>');
-  text = text.replace(/^# (.+)$/gm, '<h1>$1</h1>');
-
-  // 太字・斜体
-  text = text.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
-  text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
-
-  // HR
-  text = text.replace(/^---+$/gm, '<hr>');
-
-  // 引用
-  text = text.replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>');
-
-  // リスト
-  text = text.replace(/^(\s*[-*+] .+\n?)+/gm, m => {
-    const items = m.trim().split('\n').map(l => `<li>${l.replace(/^\s*[-*+] /, '')}</li>`).join('');
-    return `<ul>${items}</ul>`;
-  });
-  text = text.replace(/^(\s*\d+\. .+\n?)+/gm, m => {
-    const items = m.trim().split('\n').map(l => `<li>${l.replace(/^\s*\d+\. /, '')}</li>`).join('');
-    return `<ol>${items}</ol>`;
-  });
-
-  // リンク
-  text = text.replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-
-  // 改行
-  text = text.replace(/\n\n+/g, '</p><p>');
-  text = `<p>${text}</p>`;
-  text = text.replace(/<p><\/p>/g, '');
-  text = text.replace(/\n/g, '<br>');
-
-  // コードブロック復元
-  text = text.replace(/\x00CODE(\d+)\x00/g, (_, i) => {
-    const { lang, code } = codeBlocks[i];
-    const escaped = code.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    return `\x00CODEBLOCK:${i}\x00`;
-  });
-
-  return { html: text, codeBlocks };
-}
-
-// ─────────────────────────────────────────
 //  メッセージレンダリング
 // ─────────────────────────────────────────
-function renderMessage(role, content) {
+function renderMessage(role, content, id = null) {
   const welcome = document.getElementById('welcome');
   if (welcome) welcome.remove();
 
   const container = document.getElementById('messages');
   const div = document.createElement('div');
   div.className = `msg ${role}`;
+  if (id) div.id = id;
 
   const avatar = document.createElement('div');
   avatar.className = 'avatar';
@@ -801,12 +736,15 @@ function renderMessage(role, content) {
 
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
+  
+  const contentDiv = document.createElement('div');
+  contentDiv.className = 'message-content';
+  bubble.appendChild(contentDiv);
 
   if (role === 'user') {
-    bubble.textContent = content;
+    contentDiv.textContent = content;
   } else {
-    // AIメッセージ → マークダウン + コードアクション
-    renderAIContent(bubble, content);
+    renderAIContent(contentDiv, content);
   }
 
   div.appendChild(avatar);
@@ -816,89 +754,58 @@ function renderMessage(role, content) {
   return div;
 }
 
-function renderAIContent(bubble, content) {
-  // コードブロックを分割処理
+function renderAIContent(targetEl, content) {
+  targetEl.innerHTML = '';
   const parts = [];
   const regex = /```(\w*)\n?([\s\S]*?)```/g;
   let last = 0;
   let match;
 
   while ((match = regex.exec(content)) !== null) {
-    if (match.index > last) {
-      parts.push({ type: 'text', content: content.slice(last, match.index) });
-    }
+    if (match.index > last) { parts.push({ type: 'text', content: content.slice(last, match.index) }); }
     parts.push({ type: 'code', lang: match[1], code: match[2].trim() });
     last = regex.lastIndex;
   }
-  if (last < content.length) {
-    parts.push({ type: 'text', content: content.slice(last) });
-  }
+  if (last < content.length) { parts.push({ type: 'text', content: content.slice(last) }); }
 
   for (const part of parts) {
     if (part.type === 'text') {
       const wrapper = document.createElement('div');
       wrapper.innerHTML = parseTextMD(part.content);
-      bubble.appendChild(wrapper);
+      targetEl.appendChild(wrapper);
     } else {
-      // コードブロック
-      const isHTML = /html|HTML/.test(part.lang) ||
-        /<!DOCTYPE|<html|<head|<body|<div/i.test(part.code);
-
+      const isHTML = /html|HTML/.test(part.lang) || /<!DOCTYPE|<html|<head|<body|<div/i.test(part.code);
       const blockWrap = document.createElement('div');
       blockWrap.className = 'code-block-wrapper';
-
       const pre = document.createElement('pre');
       const code = document.createElement('code');
       code.textContent = part.code;
       pre.appendChild(code);
       blockWrap.appendChild(pre);
-
-      // アクションバー（preview.jsから）
       if (window.PreviewManager) {
         const actions = PreviewManager.createCodeActions(part.code, isHTML, 0);
         blockWrap.appendChild(actions);
       }
-
-      bubble.appendChild(blockWrap);
+      targetEl.appendChild(blockWrap);
     }
   }
 }
 
 function parseTextMD(text) {
-  text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
-  text = text.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-  text = text.replace(/^## (.+)$/gm, '<h2>$1</h2>');
-  text = text.replace(/^# (.+)$/gm, '<h1>$1</h1>');
-  text = text.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
-  text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
-  text = text.replace(/^---+$/gm, '<hr>');
-  text = text.replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>');
-  text = text.replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-  return text.replace(/\n/g, '<br>');
+  return text.replace(/`([^`]+)`/g, '<code>$1</code>')
+             .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+             .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+             .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+             .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+             .replace(/\n/g, '<br>');
 }
 
-// タイピングインジケーター
 function showTyping() {
   const container = document.getElementById('messages');
   const div = document.createElement('div');
   div.className = 'msg ai';
   div.id = 'typing-msg';
-
-  const avatar = document.createElement('div');
-  avatar.className = 'avatar';
-  avatar.textContent = '🤖';
-
-  const bubble = document.createElement('div');
-  bubble.className = 'bubble';
-  bubble.innerHTML = `<div class="typing-indicator">
-    <div class="typing-dot"></div>
-    <div class="typing-dot"></div>
-    <div class="typing-dot"></div>
-  </div>`;
-
-  div.appendChild(avatar);
-  div.appendChild(bubble);
+  div.innerHTML = `<div class="avatar">🤖</div><div class="bubble"><div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div></div>`;
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
 }
@@ -909,53 +816,45 @@ function removeTyping() {
 }
 
 // ─────────────────────────────────────────
-//  メッセージ送信
+//  メッセージ送信 (ストリーミング版)
 // ─────────────────────────────────────────
-// 必ず function の前に "async" がついていることを確認してください
 async function sendMessage() {
   if (STATE.isLoading) return;
 
   const userInput = document.getElementById('user-input');
   const text = userInput.value.trim();
+  const sysPrompt = document.getElementById('sys-input').value.trim();
   if (!text) return;
 
   STATE.isLoading = true;
   document.getElementById('send-btn').disabled = true;
   userInput.value = '';
+  autoResize(userInput);
 
-  // 自分のメッセージを表示
   renderMessage('user', text);
   STATE.messages.push({ role: 'user', content: text });
-  
-  // タイピング中...を表示
   showTyping();
 
   try {
-    // --- ここから Deno への送信 ---
     const res = await fetch('https://wise-lamb-60.kuiria728-stack.deno.net', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         messages: STATE.messages,
-        systemPrompt: "あなたは最強のエンジニアです。"
+        systemPrompt: sysPrompt || undefined
       }),
     });
 
-    if (!res.ok) {
-      const errorText = await res.text();
-      throw new Error(errorText);
-    }
+    if (!res.ok) throw new Error('サーバーエラー');
 
     removeTyping();
 
-    // AIの返答を入れるバブルを作成
+    // AIメッセージの枠を作成
     let fullReply = "";
-    renderMessage('ai', '...'); 
-    const allAiMessages = document.querySelectorAll('.message.ai');
-    const lastAiMessage = allAiMessages[allAiMessages.length - 1];
-    const messageContent = lastAiMessage.querySelector('.message-content') || lastAiMessage;
+    const aiMsgId = `ai-${Date.now()}`;
+    const aiDiv = renderMessage('ai', '', aiMsgId);
+    const contentEl = aiDiv.querySelector('.message-content');
 
-    // ストリーミング読み取り開始
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
 
@@ -965,7 +864,6 @@ async function sendMessage() {
 
       const chunk = decoder.decode(value);
       const lines = chunk.split('\n');
-
       for (const line of lines) {
         if (line.startsWith('data: ') && line !== 'data: [DONE]') {
           try {
@@ -973,110 +871,31 @@ async function sendMessage() {
             const content = json.choices[0]?.delta?.content || "";
             if (content) {
               fullReply += content;
-              messageContent.innerText = fullReply; // 1文字ずつ反映
-              window.scrollTo(0, document.body.scrollHeight);
+              // 1文字ずつ反映（コードブロックがある場合は簡易的にテキスト表示）
+              contentEl.innerText = fullReply; 
+              const container = document.getElementById('messages');
+              container.scrollTop = container.scrollHeight;
             }
-          } catch (e) {
-            // 解析エラーは無視
-          }
+          } catch (e) {}
         }
       }
     }
-
-    // 最終結果を保存
+    
+    // 最後にしっかりマークダウン描画
+    renderAIContent(contentEl, fullReply);
     STATE.messages.push({ role: 'assistant', content: fullReply });
+    STATE.dailyCount++;
+    saveState();
+    updateUI();
 
   } catch (err) {
-    console.error("送信エラー:", err);
+    console.error(err);
     removeTyping();
-    showToast('エラーが発生しました: ' + err.message, 'error');
-    STATE.messages.pop(); // 失敗したメッセージを削除
+    showToast('エラーが発生しました', 'error');
   } finally {
     STATE.isLoading = false;
     document.getElementById('send-btn').disabled = false;
   }
-}
-    // タイピング表示を消して、空のAIメッセージバブルを作成
-    removeTyping();
-    let fullReply = "";
-    // renderMessageが要素を返すか、中身を空で作成する関数だと想定しています
-    // もしrenderMessageが要素を返さないタイプなら、最後に追加する形に調整が必要です
-    const aiMessageId = `ai-${Date.now()}`;
-    renderMessage('ai', '', aiMessageId); 
-    const messageElement = document.getElementById(aiMessageId)?.querySelector('.message-content') || 
-                           document.getElementById(aiMessageId) || 
-                           document.querySelector('.message.ai:last-child .message-content');
-
-    // ストリームの読み取り開始
-// (前の処理は省略)
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const chunk = decoder.decode(value, { stream: true });
-        console.log("届いたデータ:", chunk); // ★これで中身が見えるようになります
-
-        const lines = chunk.split('\n');
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || trimmed === 'data: [DONE]') continue;
-
-          if (trimmed.startsWith('data: ')) {
-            try {
-              const json = JSON.stringify(trimmed.substring(6)); // 安全のために一度stringify
-              const parsed = JSON.parse(trimmed.substring(6));
-              const content = parsed.choices[0]?.delta?.content || "";
-              if (content) {
-                fullReply += content;
-                if (messageElement) {
-                  messageElement.innerText = fullReply;
-                  window.scrollTo(0, document.body.scrollHeight);
-                }
-              }
-            } catch (e) {
-              console.warn("JSON解析失敗(継続可能):", e);
-            }
-          }
-        }
-      }
-    } catch (streamErr) {
-      console.error("ストリーム読み取り中のエラー:", streamErr); // ★これで見えるはず！
-    }
-
-    STATE.messages.push({ role: 'assistant', content: fullReply });
-
-  } catch (err) {
-    removeTyping();
-    console.error("送信プロセス全体のエラー:", err); // ★ここが重要！何が起きたかコンソールに出ます
-    showToast('通信エラーが発生しました: ' + err.message, 'error');
-    STATE.messages.pop();
-  }
-  // (後の処理は省略)
-
-  STATE.isLoading = false;
-  document.getElementById('send-btn').disabled = false;
-}
-// クールダウン表示
-let cooldownTimer;
-function startCooldown(ms) {
-  clearInterval(cooldownTimer);
-  const end = Date.now() + ms;
-  const el = document.getElementById('cooldown-display');
-
-  cooldownTimer = setInterval(() => {
-    const rem = end - Date.now();
-    if (rem <= 0) {
-      clearInterval(cooldownTimer);
-      el.textContent = '';
-    } else {
-      const s = Math.ceil(rem / 1000);
-      el.textContent = s >= 60 ? `次の送信まで ${Math.floor(s/60)}分${s%60}秒` : `次の送信まで ${s}秒`;
-    }
-  }, 500);
 }
 
 // ─────────────────────────────────────────
@@ -1102,22 +921,7 @@ function toggleSys() {
 
 function clearChat() {
   STATE.messages = [];
-  const container = document.getElementById('messages');
-  container.innerHTML = '';
-  // ウェルカム復元
-  container.innerHTML = `<div id="welcome">
-    <span class="big-icon">🛠️</span>
-    <h2>自分でツクール</h2>
-    <p>チャットボットに指示するだけで、なんでも作れるよ！<br>HTMLやアプリ、ツールを一緒に作ってみよう。</p>
-    <div class="suggestion-chips">
-      <div class="chip" onclick="suggest('かっこいいランディングページのHTMLを作って')">🌐 ランディングページ</div>
-      <div class="chip" onclick="suggest('TODOリストアプリのHTMLを作って')">📝 TODOアプリ</div>
-      <div class="chip" onclick="suggest('電卓をHTMLで作って')">🔢 電卓</div>
-      <div class="chip" onclick="suggest('タイマーアプリをHTMLで作って')">⏱️ タイマー</div>
-      <div class="chip" onclick="suggest('マークダウンエディタをHTMLで作って')">📄 MDエディタ</div>
-    </div>
-  </div>`;
-  showToast('会話をリセットしました', 'success');
+  location.reload(); // 簡単のためリロード
 }
 
 function suggest(text) {
@@ -1125,52 +929,28 @@ function suggest(text) {
   sendMessage();
 }
 
-// ─────────────────────────────────────────
-//  Proモーダル
-// ─────────────────────────────────────────
-function openProModal() {
-  document.getElementById('pro-modal').classList.add('open');
-  document.getElementById('pro-key-input').focus();
-}
-
-function closeProModal() {
-  document.getElementById('pro-modal').classList.remove('open');
-}
-
-function closeProModalOutside(e) {
-  if (e.target === document.getElementById('pro-modal')) closeProModal();
-}
+function openProModal() { document.getElementById('pro-modal').classList.add('open'); }
+function closeProModal() { document.getElementById('pro-modal').classList.remove('open'); }
+function closeProModalOutside(e) { if (e.target === document.getElementById('pro-modal')) closeProModal(); }
 
 function activatePro() {
   const key = document.getElementById('pro-key-input').value.trim();
-  if (!key) { showToast('キーを入力してください', 'error'); return; }
-
-  // キーの有効性はサーバーサイドで検証（ここではUIだけ）
-  STATE.isPro  = true;
+  if (!key) return;
+  STATE.isPro = true;
   STATE.proKey = key;
   saveState();
   updateUI();
   closeProModal();
-  showToast('プロプランを有効にしました ✦', 'success');
+  showToast('Proプラン有効化', 'success');
 }
 
-// ─────────────────────────────────────────
-//  トースト
-// ─────────────────────────────────────────
-let toastTimer;
 function showToast(msg, type = '') {
   const el = document.getElementById('toast');
   el.textContent = msg;
   el.className = `show ${type}`;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.className = ''; }, 3000);
+  setTimeout(() => { el.className = ''; }, 3000);
 }
 
-// ─────────────────────────────────────────
-//  初期化
-// ─────────────────────────────────────────
 loadState();
-document.getElementById('user-input').focus();
-</script>
 </body>
 </html>
